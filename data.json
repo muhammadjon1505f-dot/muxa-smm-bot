@@ -1,0 +1,269 @@
+{
+    "services": {
+        "Telegram": [
+            "Obunachilar",
+            "Ko'rishlar",
+            "Reaksiyalar"
+        ],
+        "Instagram": [
+            "Obunachilar",
+            "Layklar",
+            "Reels"
+        ],
+        "TikTok": [
+            "Obunachilar",
+            "Ko'rishlar",
+            "Layklar"
+        ],
+        "YouTube": [
+            "Obunachilar",
+            "Ko'rishlar"
+        ]
+    },
+    "apis": [],
+    "items": {
+        "Telegram|Obunachilar": [
+            {
+                "bid": 101,
+                "name": "⚡️ Telegram O'zbek Obunachilar (Tezkor & Kafolatli)",
+                "price": 15000,
+                "min": 20,
+                "max": 50000,
+                "api": 0,
+                "service": 101,
+                "desc": "Kafolatlangan faol o'zbek obunachilari. Tezlik: 10k/kun."
+            },
+            {
+                "bid": 102,
+                "name": "💎 Telegram Jonli O'zbek Obunachilar (Sifatli)",
+                "price": 28000,
+                "min": 50,
+                "max": 20000,
+                "api": 0,
+                "service": 102,
+                "desc": "Eng sifatli premium o'zbek foydalanuvchilar."
+            },
+            {
+                "bid": 103,
+                "name": "🌐 Telegram Arzon Obunachilar (Global)",
+                "price": 9000,
+                "min": 100,
+                "max": 100000,
+                "api": 0,
+                "service": 103,
+                "desc": "Tezkor global obunachilar."
+            }
+        ],
+        "Telegram|Ko'rishlar": [
+            {
+                "bid": 104,
+                "name": "👁 Post Ko'rishlari (Oxirgi 1 ta postga)",
+                "price": 800,
+                "min": 50,
+                "max": 100000,
+                "api": 0,
+                "service": 104,
+                "desc": "Bir zumda yetkazib beriladi."
+            },
+            {
+                "bid": 105,
+                "name": "👁 Oxirgi 5 ta postga ko'rish ulashish",
+                "price": 3500,
+                "min": 100,
+                "max": 50000,
+                "api": 0,
+                "service": 105,
+                "desc": "Barcha yangi postlaringizga teng taqsimlanadi."
+            }
+        ],
+        "Telegram|Reaksiyalar": [
+            {
+                "bid": 106,
+                "name": "👍 Telegram Ijobiy Reaksiyalar (👍❤️🔥🎉🥰)",
+                "price": 1500,
+                "min": 20,
+                "max": 10000,
+                "api": 0,
+                "service": 106,
+                "desc": "Turli xil ijobiy emojilar."
+            }
+        ],
+        "Instagram|Obunachilar": [
+            {
+                "bid": 201,
+                "name": "📸 Instagram Real Obunachilar (O'zbek / MDH)",
+                "price": 24000,
+                "min": 50,
+                "max": 50000,
+                "api": 0,
+                "service": 201,
+                "desc": "Avatarlik va rasmli haqiqiy profillar."
+            },
+            {
+                "bid": 202,
+                "name": "⚡️ Instagram Tezkor Obunachilar (Global)",
+                "price": 12000,
+                "min": 100,
+                "max": 100000,
+                "api": 0,
+                "service": 202,
+                "desc": "Arzon va sifatli."
+            }
+        ],
+        "Instagram|Layklar": [
+            {
+                "bid": 203,
+                "name": "❤️ Instagram Haqiqiy Layklar (Tezkor start)",
+                "price": 2500,
+                "min": 50,
+                "max": 20000,
+                "api": 0,
+                "service": 203,
+                "desc": "Instant boshlanish."
+            }
+        ],
+        "Instagram|Reels": [
+            {
+                "bid": 204,
+                "name": "🎬 Instagram Reels Ko'rishlar (Tavsiyaga chiqaruvchi)",
+                "price": 1200,
+                "min": 100,
+                "max": 500000,
+                "api": 0,
+                "service": 204,
+                "desc": "Reels videolarni trendga chiqarish uchun."
+            }
+        ],
+        "TikTok|Obunachilar": [
+            {
+                "bid": 301,
+                "name": "🎵 TikTok Obunachilar (Jonli / Faol)",
+                "price": 29000,
+                "min": 50,
+                "max": 30000,
+                "api": 0,
+                "service": 301,
+                "desc": "Profil rivojlantirish uchun."
+            }
+        ],
+        "TikTok|Ko'rishlar": [
+            {
+                "bid": 302,
+                "name": "👁 TikTok Video Ko'rishlar (Super tezkor)",
+                "price": 600,
+                "min": 500,
+                "max": 1000000,
+                "api": 0,
+                "service": 302,
+                "desc": "Yuqori tezlikda."
+            }
+        ],
+        "TikTok|Layklar": [
+            {
+                "bid": 303,
+                "name": "❤️ TikTok Video Layklari (Sifatli)",
+                "price": 7500,
+                "min": 50,
+                "max": 50000,
+                "api": 0,
+                "service": 303,
+                "desc": "Video layklari."
+            }
+        ],
+        "YouTube|Obunachilar": [
+            {
+                "bid": 401,
+                "name": "▶️ YouTube Kafolatli Obunachilar (Monetizatsiya)",
+                "price": 85000,
+                "min": 50,
+                "max": 5000,
+                "api": 0,
+                "service": 401,
+                "desc": "Monetizatsiya shartlarini bajarish uchun xavfsiz."
+            }
+        ],
+        "YouTube|Ko'rishlar": [
+            {
+                "bid": 402,
+                "name": "👁 YouTube Video Ko'rishlar (Retention 1-3 min)",
+                "price": 18000,
+                "min": 500,
+                "max": 100000,
+                "api": 0,
+                "service": 402,
+                "desc": "Yuqori ushlab qolish vaqti."
+            }
+        ]
+    },
+    "users": {
+        "8191930658": {
+            "balance": 100100,
+            "deposited": 100000,
+            "blocked": false,
+            "referrals": 0,
+            "last_bonus_date": "2026-11-03"
+        },
+        "8893717129": {
+            "balance": 0,
+            "deposited": 0,
+            "blocked": false,
+            "referrals": 0,
+            "last_bonus_date": null,
+            "info": {
+                "first_name": ".",
+                "last_name": null,
+                "username": "Sirojjidinismoilov",
+                "language_code": "en",
+                "is_premium": false,
+                "joined": "2026-11-02 13:35:39"
+            }
+        }
+    },
+    "orders": [],
+    "ui": {
+        "buttons": {
+            "services": {
+                "aliases": [
+                    "11111111",
+                    "🌐  Xizmatlar  🌐"
+                ],
+                "text": "📃Xizmatlar",
+                "emoji_id": "5339548203320647809",
+                "label": "Xizmatlar"
+            }
+        },
+        "net_styles": {},
+        "cat_styles": {},
+        "texts": {},
+        "admin_buttons": {
+            "adm_services": {
+                "style": "primary"
+            }
+        }
+    },
+    "settings": {
+        "referral_bonus": 500,
+        "daily_bonus": 100,
+        "min_deposit": 1000,
+        "deposit_desc": "To'lov chekini yuboring",
+        "last_service_id": 402,
+        "last_order_id": 0
+    },
+    "payment_systems": [
+        {
+            "name": "Click & Payme (Karta)",
+            "card": "8600 5304 1234 5678",
+            "owner": "SMM Admin",
+            "active": true,
+            "desc": "Karta orqali to'lov qiling va chekni yuboring"
+        },
+        {
+            "name": "Telegram Stars",
+            "card": "1 Star = 120 so'm",
+            "owner": "Telegram",
+            "active": true,
+            "desc": "/stars buyrug'i orqali to'lang"
+        }
+    ],
+    "deposits": []
+}

@@ -1,0 +1,25 @@
+# Maxfiy kalitlar va tokenlar
+.env
+*.env
+
+# Alohida repo (GitHub Pages orqali ishlaydi)
+webapp/
+
+# Python kesh fayllari
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Loglar
+*.log
+bot.log
+
+# Tizim fayllari
+.DS_Store
+Thumbs.db
+
+# Lokal muhit
+.venv/
+venv/
+ENV/
