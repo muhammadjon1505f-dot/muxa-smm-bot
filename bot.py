@@ -99,6 +99,21 @@ db_data["settings"].setdefault("referral_bonus", 0)
 db_data["settings"].setdefault("daily_bonus", 0)
 db_data["settings"].setdefault("min_deposit", 0)
 db_data["settings"].setdefault("deposit_desc", "")
+db_data["settings"].setdefault("group_broadcast", {
+    "enabled": True,
+    "chat_id": -1004283476663,
+    "chat_title": "Ybanat",
+    "interval": 300,
+    "message": (
+        "🚀 <b>Muxa SMM — Tezkor va Arzon SMM Xizmatlari!</b>\n\n"
+        "✨ <b>Telegram:</b> Obunachilar, ko'rishlar, reaksiyalar\n"
+        "📸 <b>Instagram:</b> Obunachilar, layklar, video prosmotr\n"
+        "🎬 <b>YouTube & TikTok:</b> 100% ishonchli va sifatli!\n\n"
+        "⚡️ Qulay narxlar va 24/7 avtomatik yetkazib berish!\n\n"
+        "👇 Buyurtma berish uchun botimizga kiring:\n"
+        "👉 @Muxa_aibot"
+    )
+})
 for _p in db_data["payment_systems"]:
     _p.setdefault("active", True)
     _p.setdefault("desc", "")
@@ -6448,6 +6463,181 @@ async def order_status_checker():
         await asyncio.sleep(60)
 
 
+# ---------------------------------------------------------------- YBANAT GURUHIGA AVTOMATIK XABARLAR (HAR 5 DAQIQADA)
+def get_ybanat_cfg():
+    cfg = db_data.setdefault("settings", {}).setdefault("group_broadcast", {})
+    cfg.setdefault("enabled", True)
+    cfg.setdefault("chat_id", -1004283476663)
+    cfg.setdefault("chat_title", "Ybanat")
+    cfg.setdefault("interval", 300)
+    cfg.setdefault("message", (
+        "🚀 <b>Muxa SMM — Tezkor va Arzon SMM Xizmatlari!</b>\n\n"
+        "✨ <b>Telegram:</b> Obunachilar, ko'rishlar, reaksiyalar\n"
+        "📸 <b>Instagram:</b> Obunachilar, layklar, video prosmotr\n"
+        "🎬 <b>YouTube & TikTok:</b> 100% ishonchli va sifatli!\n\n"
+        "⚡️ Qulay narxlar va 24/7 avtomatik yetkazib berish!\n\n"
+        "👇 Buyurtma berish uchun botimizga kiring:\n"
+        "👉 @Muxa_aibot"
+    ))
+    return cfg
+
+
+async def send_ybanat_broadcast(bot: Bot):
+    cfg = get_ybanat_cfg()
+    if not cfg.get("enabled", True):
+        return False, "O'chirilgan"
+    chat_id = cfg.get("chat_id", -1004283476663)
+    text = cfg.get("message")
+    markup = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🤖 Botga kirish 🚀", url="https://t.me/Muxa_aibot?start=ybanat")]
+        ]
+    )
+    try:
+        sent = await bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            parse_mode="HTML",
+            reply_markup=markup,
+            disable_web_page_preview=True,
+        )
+        logging.info(f"Ybanat guruhiga 5 daqiqalik xabar yuborildi! msg_id={sent.message_id}")
+        return True, sent.message_id
+    except Exception as e:
+        logging.error(f"Ybanat guruhiga xabar yuborishda xato: {e}")
+        return False, str(e)
+
+
+async def group_broadcast_loop(bot: Bot):
+    # Bot ishga tushgach, birinchi xabarni 10 soniyadan so'ng yuboradi
+    await asyncio.sleep(10)
+    while True:
+        try:
+            cfg = get_ybanat_cfg()
+            if cfg.get("enabled", True):
+                await send_ybanat_broadcast(bot)
+        except Exception as e:
+            logging.error(f"group_broadcast_loop xatosi: {e}")
+
+        cfg = get_ybanat_cfg()
+        interval = max(30, int(cfg.get("interval", 300)))
+        await asyncio.sleep(interval)
+
+
+@dp.message(F.chat.type.in_({"group", "supergroup"}))
+async def group_activity_listener(message: types.Message):
+    # Agar bot Ybanat guruhida xabar ko'rsa, chat_id ni avto-yangilaydi
+    chat = message.chat
+    if "ybanat" in (chat.title or "").lower():
+        cfg = get_ybanat_cfg()
+        if cfg.get("chat_id") != chat.id:
+            cfg["chat_id"] = chat.id
+            cfg["chat_title"] = chat.title
+            save_data(db_data)
+            logging.info(f"Ybanat guruhi aniqlandi: {chat.title} ({chat.id})")
+
+
+@dp.my_chat_member()
+async def group_member_update_listener(event: types.ChatMemberUpdated):
+    chat = event.chat
+    if chat.type in ("group", "supergroup") and "ybanat" in (chat.title or "").lower():
+        cfg = get_ybanat_cfg()
+        cfg["chat_id"] = chat.id
+        cfg["chat_title"] = chat.title
+        save_data(db_data)
+        logging.info(f"Bot Ybanat guruhiga a'zo bo'ldi/yangilandi: {chat.title} ({chat.id})")
+
+
+# Admin boshqaruv buyruqlari
+@dp.message(Command("ybanat"), F.chat.type == "private")
+async def admin_ybanat_cmd(message: types.Message):
+    if message.from_user.id != OWNER_ID:
+        return
+    cfg = get_ybanat_cfg()
+    status_text = "🟢 Yoqilgan (Faol)" if cfg.get("enabled", True) else "🔴 O'chirilgan"
+    interval_min = cfg.get("interval", 300) // 60
+    msg = (
+        f"📢 <b>Ybanat Guruhi Avto-Xabar Tizimi</b>\n\n"
+        f"Holat: <b>{status_text}</b>\n"
+        f"Guruh: <b>{cfg.get('chat_title')}</b> (<code>{cfg.get('chat_id')}</code>)\n"
+        f"Oraliq vaqt: <b>{interval_min} daqiqa</b> ({cfg.get('interval', 300)} soniya)\n\n"
+        f"📝 <b>Joriy xabar matni:</b>\n"
+        f"---------------------------\n"
+        f"{cfg.get('message')}\n"
+        f"---------------------------\n\n"
+        f"⚙️ <b>Boshqaruv buyruqlari:</b>\n"
+        f"• /ybanat_on — Avto-yuborishni yoqish\n"
+        f"• /ybanat_off — Avto-yuborishni to'xtatish\n"
+        f"• /ybanat_send_now — Hozir darhol xabar yuborish\n"
+        f"• /set_ybanat_msg [matn] — Xabar matnini yangilash\n"
+        f"• /ybanat_interval [soniya] — Oraliq vaqtni o'zgartirish (masalan: 300)"
+    )
+    await message.answer(msg, parse_mode="HTML")
+
+
+@dp.message(Command("ybanat_on"), F.chat.type == "private")
+async def admin_ybanat_on(message: types.Message):
+    if message.from_user.id != OWNER_ID:
+        return
+    cfg = get_ybanat_cfg()
+    cfg["enabled"] = True
+    save_data(db_data)
+    await message.answer("✅ Ybanat guruhiga har 5 daqiqada xabar yuborish <b>YOQILDI</b>!", parse_mode="HTML")
+
+
+@dp.message(Command("ybanat_off"), F.chat.type == "private")
+async def admin_ybanat_off(message: types.Message):
+    if message.from_user.id != OWNER_ID:
+        return
+    cfg = get_ybanat_cfg()
+    cfg["enabled"] = False
+    save_data(db_data)
+    await message.answer("⏸ Ybanat guruhiga avto-xabar yuborish <b>TO'XTATILDI</b>!", parse_mode="HTML")
+
+
+@dp.message(Command("ybanat_send_now"), F.chat.type == "private")
+async def admin_ybanat_send_now(message: types.Message):
+    if message.from_user.id != OWNER_ID:
+        return
+    status, res = await send_ybanat_broadcast(bot)
+    if status:
+        await message.answer(f"✅ Xabar Ybanat guruhiga yuborildi! (Xabar ID: {res})")
+    else:
+        await message.answer(f"❌ Xabar yuborishda xatolik yuz berdi:\n<code>{res}</code>", parse_mode="HTML")
+
+
+@dp.message(Command("set_ybanat_msg"), F.chat.type == "private")
+async def admin_ybanat_set_msg(message: types.Message):
+    if message.from_user.id != OWNER_ID:
+        return
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer("⚠️ Yangi xabar matnini kiriting!\nMasalan: <code>/set_ybanat_msg Salom guruh!</code>", parse_mode="HTML")
+        return
+    new_text = parts[1].strip()
+    cfg = get_ybanat_cfg()
+    cfg["message"] = new_text
+    save_data(db_data)
+    await message.answer("✅ Ybanat guruhiga yuboriladigan xabar matni muvaffaqiyatli saqlandi!", parse_mode="HTML")
+
+
+@dp.message(Command("ybanat_interval"), F.chat.type == "private")
+async def admin_ybanat_set_interval(message: types.Message):
+    if message.from_user.id != OWNER_ID:
+        return
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip().isdigit():
+        await message.answer("⚠️ Oraliq vaqtni soniyalarda kiriting (kamida 30 soniya)!\nMasalan: <code>/ybanat_interval 300</code> (5 daqiqa)", parse_mode="HTML")
+        return
+    sec = int(parts[1].strip())
+    if sec < 30:
+        sec = 30
+    cfg = get_ybanat_cfg()
+    cfg["interval"] = sec
+    save_data(db_data)
+    await message.answer(f"✅ Oraliq vaqt muvaffaqiyatli saqlandi: <b>{sec} soniya</b> ({sec // 60} daqiqa)!", parse_mode="HTML")
+
+
 
 async def set_main_menu(bot: Bot):
     try:
@@ -6472,10 +6662,12 @@ async def main():
     start_health_server_in_background()
     await set_main_menu(bot)
     checker_task = asyncio.create_task(order_status_checker())
+    broadcast_task = asyncio.create_task(group_broadcast_loop(bot))
     try:
         await dp.start_polling(bot)
     finally:
         checker_task.cancel()
+        broadcast_task.cancel()
 
 
 if __name__ == "__main__":
