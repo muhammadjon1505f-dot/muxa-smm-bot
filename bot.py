@@ -6,6 +6,7 @@ import random
 import re
 import time
 from datetime import datetime
+import html
 from html import escape, unescape
 from urllib.parse import urlparse
 
@@ -486,16 +487,56 @@ async def safe_edit(message, text, reply_markup=None, parse_mode=None, **kw):
 
 
 # ---------------------------------------------------------------- API CALLS
-async def api_post(url, payload):
-    timeout = aiohttp.ClientTimeout(total=20)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.post(url, data=payload) as resp:
-            if resp.status != 200:
-                return False, f"HTTP Error: {resp.status}"
+async def api_post(url: str, payload: dict):
+    if not url:
+        return False, "URL kiritilmagan"
+    url = url.strip()
+    if not url.startswith("http://") and not url.startswith("https://"):
+        url = "https://" + url
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+    }
+    timeout = aiohttp.ClientTimeout(total=25)
+    connector = aiohttp.TCPConnector(ssl=False)
+
+    try:
+        async with aiohttp.ClientSession(timeout=timeout, connector=connector, headers=headers) as session:
+            # 1. POST orqali urinib ko'rish (SMM Panel v2 standarti)
             try:
-                return True, await resp.json(content_type=None)
+                async with session.post(url, data=payload) as resp:
+                    raw = await resp.text()
+                    cleaned = raw.lstrip("\ufeff").strip()
+                    if resp.status == 200:
+                        try:
+                            return True, json.loads(cleaned)
+                        except Exception:
+                            if cleaned.replace(".", "", 1).isdigit():
+                                return True, {"balance": cleaned, "currency": "USD"}
+                            return False, f"Provayder noto'g'ri javob qaytardi: {cleaned[:100]}"
+                    elif resp.status not in (404, 405):
+                        return False, f"HTTP Error {resp.status}: {cleaned[:100]}"
             except Exception:
-                return False, "Provayder noto'g'ri javob qaytardi"
+                pass
+
+            # 2. GET orqali fallback
+            async with session.get(url, params=payload) as resp:
+                raw = await resp.text()
+                cleaned = raw.lstrip("\ufeff").strip()
+                if resp.status == 200:
+                    try:
+                        return True, json.loads(cleaned)
+                    except Exception:
+                        if cleaned.replace(".", "", 1).isdigit():
+                            return True, {"balance": cleaned, "currency": "USD"}
+                        return False, f"Provayder noto'g'ri javob qaytardi: {cleaned[:100]}"
+                return False, f"HTTP Error {resp.status}: {cleaned[:100]}"
+
+    except asyncio.TimeoutError:
+        return False, "Provayder serveri javob bermadi (Timeout 25s)"
+    except Exception as e:
+        return False, f"Ulanish xatosi: {str(e)}"
 
 
 async def fetch_api_balance(url: str, key: str):
@@ -1366,12 +1407,27 @@ async def dispatch_nav_command_or_button(message: types.Message, state: FSMConte
         await bc_entry(message, state)
     elif is_admin_btn(t, "adm_bot_btns") or t == "🔘 Bot tugmalari":
         await bot_buttons_menu_handler(message, state)
+    elif is_admin_btn(t, "adm_admin_btns") or t == "🔘 Admin tugmalari":
+        await admin_buttons_menu_handler(message, state)
+    elif is_admin_btn(t, "adm_api") or t in {"🔑 API boshqaruvi", "API boshqaruvi", "API boshqaruv", "api boshqaruv", "/api", "api"} or "api boshqaruv" in t.lower():
+        await api_management_handler(message, state)
+    elif is_admin_btn(t, "adm_services") or t in {"🛍 Xizmatlar", "Xizmatlar boshqaruvi"}:
+        await admin_services_handler(message, state)
+    elif is_admin_btn(t, "adm_free_add") or t == "➕ Tekin Xizmatlar Qo'shish":
+        await zr_handler(message, state)
+    elif is_admin_btn(t, "adm_free_del") or t == "Xizmat O'chirish 🗑":
+        await dl_handler(message, state)
     elif is_admin_btn(t, "adm_referral") or t == "💸 Referal/Bonus":
         await referral_settings_handler(message, state)
     elif is_admin_btn(t, "adm_forced") or t == "📢 Majburiy a'zolik":
         await force_admin_handler(message, state)
     elif is_admin_btn(t, "adm_channel") or t == "📡 Buyurtma kanali":
         await order_channel_handler(message, state)
+    elif "boshqaruv" in t.lower() or t in {"Boshqaruv 🗄️", "Boshqaruv", "/admin", "/boshqaruv"}:
+        if message.from_user.id == OWNER_ID:
+            await message.reply("Admin Panel", reply_markup=build_admin_kb())
+        else:
+            await message.answer("⚠️ Ushbu bo'lim faqat bot administratori uchun!")
     elif is_btn(t, "back") or t in {"Orqaga", "🔙 Orqaga", "⏪ Orqaga", "Bekor qilish", "❌ Bekor qilish", "Bosh menyu", "🏠 Bosh menyu"}:
         await message.answer("🖥️ Asosiy menyudasiz", reply_markup=main_kb(message.from_user.id))
     elif t.startswith("/start"):
@@ -4885,29 +4941,69 @@ async def confirm_order(call: types.CallbackQuery, state: FSMContext):
 # ---------------------------------------------------------------- ADMIN: API BOSHQARUVI
 async def show_api_list(message_or_call):
     apis = db_data.get("apis", [])
-    text = f"🔑 API pravayderlar ro'yhati: {len(apis)} ta\n\n"
-    results = await asyncio.gather(
-        *(fetch_api_balance(api.get("url"), api.get("key")) for api in apis)
-    )
+    if not apis:
+        text = (
+            "🔑 <b>API provayderlar boshqaruvi</b>\n\n"
+            "<i>Hozircha birorta ham API provayder ulanmagan.\n"
+            "Quyidagi «➕ API qo'shish» tugmasi orqali yangi provayder ulang:</i>"
+        )
+    else:
+        text = f"🔑 <b>API provayderlar ro'yxati:</b> {len(apis)} ta\n\n"
+        results = await asyncio.gather(
+            *(fetch_api_balance(api.get("url"), api.get("key")) for api in apis),
+            return_exceptions=True
+        )
+        for idx, (api, res) in enumerate(zip(apis, results), 1):
+            if isinstance(res, Exception):
+                bal_str = "Ulanish xatosi"
+            else:
+                ok, balance, currency = res
+                bal_str = f"{balance} {currency}" if ok else f"Xato: {balance}"
+            text += f"{idx}. <b>{escape(api_title(api))}</b> ({escape(str(bal_str))})\n"
+
     buttons = []
-    for idx, (api, (ok, balance, currency)) in enumerate(zip(apis, results), 1):
-        bal_str = f"{balance} {currency}" if ok else "Xato!"
-        text += f"{idx}. {api_title(api)}  ({bal_str})\n"
-        buttons.append(InlineKeyboardButton(text=f"| • {idx} • |", callback_data=f"view_api_{idx-1}", style="primary"))
-    buttons = [buttons[i:i + 3] for i in range(0, len(buttons), 3)]  # raqamlar yonma-yon, qatorda 3 tadan
-    buttons.append([InlineKeyboardButton(text="➕ Api qo'shish", callback_data="add_api", style="success")])
+    if apis:
+        row = []
+        for idx in range(1, len(apis) + 1):
+            row.append(InlineKeyboardButton(text=f"| • {idx} • |", callback_data=f"view_api_{idx-1}", **sk("primary")))
+            if len(row) == 3:
+                buttons.append(row)
+                row = []
+        if row:
+            buttons.append(row)
+
+    buttons.append([InlineKeyboardButton(text="➕ API qo'shish", callback_data="add_api", **sk("success"))])
+    buttons.append([InlineKeyboardButton(text="🔙 Boshqaruvga qaytish", callback_data="back_to_admin_panel", **sk("danger"))])
 
     if isinstance(message_or_call, types.Message):
-        await message_or_call.answer(text, reply_markup=kb(buttons))
+        await message_or_call.answer(text, reply_markup=kb(buttons), parse_mode="HTML")
     else:
-        await safe_edit(message_or_call.message, text, kb(buttons))
+        await safe_edit(message_or_call.message, text, kb(buttons), parse_mode="HTML")
 
 
-@dp.message(not_renaming, lambda m: bool(m.text) and is_admin_btn(m.text, "adm_api"))
+@dp.callback_query(F.data == "back_to_admin_panel")
+async def back_to_admin_panel_cb(call: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    if call.from_user.id == OWNER_ID:
+        try:
+            await call.message.delete()
+        except Exception:
+            pass
+        await call.message.answer("🗄️ <b>Admin Panel</b>", reply_markup=build_admin_kb(), parse_mode="HTML")
+    await call.answer()
+
+
+@dp.message(not_renaming, lambda m: bool(m.text) and (
+    is_admin_btn(m.text, "adm_api")
+    or m.text in {"🔑 API boshqaruvi", "API boshqaruvi", "API boshqaruv", "api boshqaruv", "/api", "api"}
+    or "api boshqaruv" in m.text.lower()
+))
 async def api_management_handler(message: types.Message, state: FSMContext):
     await state.clear()
     if message.from_user.id == OWNER_ID:
         await show_api_list(message)
+    else:
+        await message.answer("⚠️ Ushbu bo'lim faqat bot administratori uchun!")
 
 
 @dp.callback_query(F.data == "back_to_api_list")
@@ -4927,16 +5023,22 @@ async def view_api_details(call: types.CallbackQuery):
     if idx < len(apis):
         url, key = apis[idx].get("url"), apis[idx].get("key")
         ok, balance, currency = await fetch_api_balance(url, key)
-        bal_str = f"{balance} {currency}" if ok else "Xato!"
-        text = f"{idx+1}. {api_title(apis[idx])}  ✅\n\n🏷 Nomi: {api_title(apis[idx])}\n🔗 Havola: {url}\n🔑 Kalit: {key}\n\n💰 Balans: {bal_str}"
+        bal_str = f"{balance} {currency}" if ok else f"Xato: {balance}"
+        text = (
+            f"<b>{idx+1}. {escape(api_title(apis[idx]))}</b> ✅\n\n"
+            f"🏷 <b>Nomi:</b> {escape(api_title(apis[idx]))}\n"
+            f"🔗 <b>Havola:</b> <code>{escape(str(url))}</code>\n"
+            f"🔑 <b>Kalit:</b> <code>{escape(str(key))}</code>\n\n"
+            f"💰 <b>Balans:</b> {escape(str(bal_str))}"
+        )
         rows = [
-            [InlineKeyboardButton(text="✒️ Nomi", callback_data=f"edit_api_name_{idx}", style="success"),
-             InlineKeyboardButton(text="✒️ URL", callback_data=f"edit_api_url_{idx}", style="success")],
-            [InlineKeyboardButton(text="✒️ Kalit", callback_data=f"edit_api_key_{idx}", style="success")],
-            [InlineKeyboardButton(text="🗑️ O'chirish", callback_data=f"del_api_{idx}", style="danger"),
-             InlineKeyboardButton(text="⏪ Orqaga", callback_data="back_to_api_list", style="primary")],
+            [InlineKeyboardButton(text="✒️ Nomi", callback_data=f"edit_api_name_{idx}", **sk("success")),
+             InlineKeyboardButton(text="✒️ URL", callback_data=f"edit_api_url_{idx}", **sk("success"))],
+            [InlineKeyboardButton(text="✒️ Kalit", callback_data=f"edit_api_key_{idx}", **sk("success"))],
+            [InlineKeyboardButton(text="🗑️ O'chirish", callback_data=f"del_api_{idx}", **sk("danger")),
+             InlineKeyboardButton(text="⏪ Orqaga", callback_data="back_to_api_list", **sk("primary"))],
         ]
-        await safe_edit(call.message, text, kb(rows))
+        await safe_edit(call.message, text, kb(rows), parse_mode="HTML")
     await call.answer()
 
 
@@ -4944,36 +5046,78 @@ async def view_api_details(call: types.CallbackQuery):
 async def add_api_start(call: types.CallbackQuery, state: FSMContext):
     if call.from_user.id == OWNER_ID:
         await state.set_state(AdminState.waiting_for_api_url)
-        await safe_edit(call.message, "🔗 API manzilini kiriting:\n\n📝 Namuna:\nhttp://example.com/api/v2", kb([back_btn("back_to_api_list")]))
+        await safe_edit(
+            call.message,
+            "🔗 <b>API manzilini (URL) kiriting:</b>\n\n"
+            "📝 <i>Namuna:</i>\n<code>https://smm-provider.com/api/v2</code>",
+            kb([back_btn("back_to_api_list")]),
+            parse_mode="HTML"
+        )
         await call.answer()
 
 
 @dp.message(StateFilter(AdminState.waiting_for_api_url))
 async def process_api_url(message: types.Message, state: FSMContext):
+    if is_nav_command_or_button(message.text):
+        await dispatch_nav_command_or_button(message, state)
+        return
     if message.from_user.id == OWNER_ID:
-        await state.update_data(api_url=message.text.strip())
+        url = (message.text or "").strip()
+        if not url:
+            await message.answer("❌ URL bo'sh bo'lishi mumkin emas. Qaytadan kiriting:", reply_markup=kb([back_btn("back_to_api_list")]))
+            return
+        if not url.startswith("http://") and not url.startswith("https://"):
+            url = "https://" + url
+        await state.update_data(api_url=url)
         await state.set_state(AdminState.waiting_for_api_key)
-        await message.answer("✅ URL qabul qilindi!\n\n🔑 Endi API kalitini kiriting:", reply_markup=kb([back_btn("back_to_api_list")]))
+        await message.answer(
+            f"✅ <b>URL qabul qilindi:</b>\n<code>{escape(url)}</code>\n\n"
+            f"🔑 <b>Endi API kalitini (API Key) kiriting:</b>",
+            reply_markup=kb([back_btn("back_to_api_list")]),
+            parse_mode="HTML"
+        )
 
 
 @dp.message(StateFilter(AdminState.waiting_for_api_key))
 async def process_api_key(message: types.Message, state: FSMContext):
+    if is_nav_command_or_button(message.text):
+        await dispatch_nav_command_or_button(message, state)
+        return
     if message.from_user.id == OWNER_ID:
-        key = message.text.strip()
+        key = (message.text or "").strip()
+        if not key:
+            await message.answer("❌ API kaliti bo'sh bo'lmasligi kerak. Qaytadan kiriting:", reply_markup=kb([back_btn("back_to_api_list")]))
+            return
         data = await state.get_data()
         url = data.get("api_url")
-        msg = await message.answer("🔄 API ulanishi va balans tekshirilmoqda...")
+        msg = await message.answer("🔄 API ulanishi va hisob balansi tekshirilmoqda...")
         ok, balance, currency = await fetch_api_balance(url, key)
         back = kb([back_btn("back_to_api_list")])
         if ok:
-            db_data["apis"].append({"url": url, "key": key})
+            apis = db_data.setdefault("apis", [])
+            existing = next((a for a in apis if a.get("url") == url), None)
+            if existing:
+                existing["key"] = key
+            else:
+                apis.append({"url": url, "key": key})
             save_data(db_data)
             await state.clear()
             await msg.edit_text(
-                f"✅ API muvaffaqiyatli qo'shildi!\n\n💰 Balans: {balance} {currency}\n🔗 Havola: {url}\nKalit: {key}",
-                reply_markup=back)
+                f"✅ <b>API muvaffaqiyatli qo'shildi!</b>\n\n"
+                f"💰 <b>Balans:</b> {balance} {currency}\n"
+                f"🔗 <b>Havola:</b> <code>{escape(url)}</code>\n"
+                f"🔑 <b>Kalit:</b> <code>{escape(key)}</code>",
+                reply_markup=back,
+                parse_mode="HTML"
+            )
         else:
-            await msg.edit_text(f"❌ Ulanishda xatolik yuz berdi!\nXato: {balance}\n\nQaytadan urinib ko'ring.", reply_markup=back)
+            await msg.edit_text(
+                f"❌ <b>API ga ulanib bo'lmadi!</b>\n\n"
+                f"⚠️ <b>Xato tafsiloti:</b>\n{escape(str(balance))}\n\n"
+                f"URL yoki kalit noto'g'ri bo'lishi mumkin. Qaytadan urinib ko'ring:",
+                reply_markup=back,
+                parse_mode="HTML"
+            )
 
 
 @dp.callback_query(F.data.startswith("del_api_"))
@@ -4999,14 +5143,20 @@ async def edit_api_name_start(call: types.CallbackQuery, state: FSMContext):
         await state.update_data(edit_idx=idx)
         await safe_edit(
             call.message,
-            f"📝 Provayder uchun yangi nom kiriting:\n\nHozirgi nom: {api_title(db_data['apis'][idx])}\n\nMasalan: TOP | SMM",
+            f"📝 <b>Provayder uchun yangi nom kiriting:</b>\n\n"
+            f"Hozirgi nom: <b>{escape(api_title(db_data['apis'][idx]))}</b>\n\n"
+            f"<i>Masalan: TOP | SMM</i>",
             kb([back_btn(f"view_api_{idx}")]),
+            parse_mode="HTML"
         )
         await call.answer()
 
 
 @dp.message(StateFilter(AdminState.waiting_for_edit_api_name))
 async def process_edit_api_name(message: types.Message, state: FSMContext):
+    if is_nav_command_or_button(message.text):
+        await dispatch_nav_command_or_button(message, state)
+        return
     if message.from_user.id == OWNER_ID:
         data = await state.get_data()
         idx = data.get("edit_idx")
@@ -5018,7 +5168,7 @@ async def process_edit_api_name(message: types.Message, state: FSMContext):
             db_data["apis"][idx]["name"] = name
             save_data(db_data)
         await state.clear()
-        await message.answer(f"✅ API nomi yangilandi: {name}", reply_markup=kb([back_btn(f"view_api_{idx}")]))
+        await message.answer(f"✅ API nomi yangilandi: <b>{escape(name)}</b>", reply_markup=kb([back_btn(f"view_api_{idx}")]), parse_mode="HTML")
 
 
 @dp.callback_query(F.data.startswith("edit_api_url_"))
@@ -5033,12 +5183,17 @@ async def edit_api_url_start(call: types.CallbackQuery, state: FSMContext):
 
 @dp.message(StateFilter(AdminState.waiting_for_edit_url))
 async def process_edit_api_url(message: types.Message, state: FSMContext):
+    if is_nav_command_or_button(message.text):
+        await dispatch_nav_command_or_button(message, state)
+        return
     if message.from_user.id == OWNER_ID:
         data = await state.get_data()
         idx = data.get("edit_idx")
         if idx is not None and idx < len(db_data["apis"]):
             old_url = db_data["apis"][idx]["url"]
-            new_url = message.text.strip()
+            new_url = (message.text or "").strip()
+            if not new_url.startswith("http://") and not new_url.startswith("https://"):
+                new_url = "https://" + new_url
             db_data["apis"][idx]["url"] = new_url
             # shu provayderdagi xizmatlar ham yangi manzilga ulanadi
             for lst in db_data["items"].values():
@@ -5065,11 +5220,14 @@ async def edit_api_key_start(call: types.CallbackQuery, state: FSMContext):
 
 @dp.message(StateFilter(AdminState.waiting_for_edit_key))
 async def process_edit_api_key(message: types.Message, state: FSMContext):
+    if is_nav_command_or_button(message.text):
+        await dispatch_nav_command_or_button(message, state)
+        return
     if message.from_user.id == OWNER_ID:
         data = await state.get_data()
         idx = data.get("edit_idx")
         if idx is not None and idx < len(db_data["apis"]):
-            db_data["apis"][idx]["key"] = message.text.strip()
+            db_data["apis"][idx]["key"] = (message.text or "").strip()
             save_data(db_data)
         await state.clear()
         await message.answer("✅ API kaliti yangilandi!", reply_markup=kb([back_btn(f"view_api_{idx}")]))
