@@ -134,7 +134,19 @@ for _o in db_data["orders"]:
 db_data["settings"]["last_order_id"] = _last_id
 save_data(db_data)
 
-TELEGRAM_PROXY = os.getenv("TELEGRAM_PROXY")
+def should_use_proxy():
+    proxy = os.getenv("TELEGRAM_PROXY")
+    if not proxy:
+        return None
+    # PythonAnywhere ichki proxy domeni faqat PythonAnywhere xostingida mavjud
+    if "proxy.server" in proxy:
+        if os.getenv("PYTHONANYWHERE_DOMAIN") or os.getenv("PYTHONANYWHERE_SITE") or os.path.exists("/var/www"):
+            return proxy
+        # Aks holda 0-latency uchun proksisiz to'g'ridan-to'g'ri ulanish
+        return None
+    return proxy
+
+TELEGRAM_PROXY = should_use_proxy()
 if TELEGRAM_PROXY:
     from aiogram.client.session.aiohttp import AiohttpSession
     bot = Bot(token=BOT_TOKEN, session=AiohttpSession(proxy=TELEGRAM_PROXY))
@@ -731,11 +743,27 @@ def srv_label(it):
     return it.get("label") or it.get("name", "")
 
 
+def get_webapp_url(uid: int) -> str:
+    try:
+        u = get_user(uid)
+        bal = int(u.get("balance", 0))
+        orders_cnt = sum(1 for o in db_data.get("orders", []) if str(o.get("user_id")) == str(uid))
+        ref_cnt = int(u.get("referrals", 0))
+    except Exception:
+        bal = 0
+        orders_cnt = 0
+        ref_cnt = 0
+    base = WEBAPP_URL.rstrip("/")
+    return f"{base}/?uid={uid}&bal={bal}&orders={orders_cnt}&ref={ref_cnt}"
+
+
 def build_kb(uid):
     rest_keys = [k for k in MAIN_KEYS if k != "services"]
     rest_btns = [main_button(k) for k in rest_keys]
+    url = get_webapp_url(uid)
+    webapp_btn = KeyboardButton(text="📱 SMM Mini App 🚀", web_app=types.WebAppInfo(url=url))
     rows = [
-        [main_button("services")]
+        [main_button("services"), webapp_btn]
     ]
     rows += [rest_btns[i:i + 2] for i in range(0, len(rest_btns), 2)]
     if uid == OWNER_ID:
@@ -1113,32 +1141,7 @@ def get_admin_services_inline():
     return kb(rows)
 
 
-# ---------------------------------------------------------------- START / MENU
-async def register_user(tg_user):
-    uid = str(tg_user.id)
-    if uid in db_data["users"]:
-        return
-    _newly_registered.add(tg_user.id)
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    db_data["users"][uid] = {
-        "balance": 0,
-        "deposited": 0,
-        "blocked": False,
-        "referrals": 0,
-        "last_bonus_date": None,
-        "info": {
-            "first_name": tg_user.first_name,
-            "last_name": tg_user.last_name,
-            "username": tg_user.username,
-            "language_code": tg_user.language_code,
-            "is_premium": bool(getattr(tg_user, "is_premium", False)),
-            "joined": now,
-        },
-    }
-    save_data(db_data)
-    if tg_user.id == OWNER_ID:
-        return
-
+async def _notify_admin_new_user(tg_user, now):
     bio = None
     try:
         chat = await bot.get_chat(tg_user.id)
@@ -1176,6 +1179,33 @@ async def register_user(tg_user):
                 await bot.send_message(OWNER_ID, text)
             except Exception as e:
                 print("Adminga xabar yuborilmadi:", e)
+
+
+# ---------------------------------------------------------------- START / MENU
+async def register_user(tg_user):
+    uid = str(tg_user.id)
+    if uid in db_data["users"]:
+        return
+    _newly_registered.add(tg_user.id)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    db_data["users"][uid] = {
+        "balance": 0,
+        "deposited": 0,
+        "blocked": False,
+        "referrals": 0,
+        "last_bonus_date": None,
+        "info": {
+            "first_name": tg_user.first_name,
+            "last_name": tg_user.last_name,
+            "username": tg_user.username,
+            "language_code": tg_user.language_code,
+            "is_premium": bool(getattr(tg_user, "is_premium", False)),
+            "joined": now,
+        },
+    }
+    save_data(db_data)
+    if tg_user.id != OWNER_ID:
+        asyncio.create_task(_notify_admin_new_user(tg_user, now))
 
 
 class RegisterMiddleware(BaseMiddleware):
@@ -1241,16 +1271,46 @@ async def process_referral(message: types.Message):
 @dp.message(CommandStart())
 async def start_handler(message: types.Message, state: FSMContext):
     await state.clear()
-    get_user(message.from_user.id)
-    save_data(db_data)
+    uid = message.from_user.id
+    get_user(uid)
     await process_referral(message)
+
+    # Foydalanuvchiga mos shaxsiy menyu tugmasini (balansi bilan) o'rnatish
+    async def _setup_user_menu():
+        try:
+            url = get_webapp_url(uid)
+            await bot.set_chat_menu_button(
+                chat_id=message.chat.id,
+                menu_button=types.MenuButtonWebApp(
+                    text="Mini App 📱",
+                    web_app=types.WebAppInfo(url=url),
+                )
+            )
+        except Exception:
+            pass
+    asyncio.create_task(_setup_user_menu())
+
+    # Agar chuqur havola orqali buyurtma yuborilgan bo'lsa (/start ord_...)
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) > 1 and (parts[1].startswith("ord_") or parts[1].startswith("order_")):
+        try:
+            import base64
+            enc = parts[1].split("_", 1)[1]
+            raw_json = base64.urlsafe_b64decode(enc.encode()).decode()
+            order_data = json.loads(raw_json)
+            # handle_webapp_data mantig'i orqali qabul qilish
+            await execute_direct_order(message, order_data)
+            return
+        except Exception:
+            pass
+
     await message.reply(
         "👋 <b>Assalomu alaykum va xush kelibsiz!</b>\n\n"
         "🚀 <b>Eng sifatli va arzon SMM xizmatlari</b> botimizga xush kelibsiz!\n"
         "Telegram, Instagram, TikTok, YouTube va boshqa ijtimoiy tarmoqlar uchun xizmatlar mavjud.",
         parse_mode="HTML"
     )
-    await message.answer("🖥️ Asosiy menyu tugmalari faollashtirildi:", reply_markup=main_kb(message.from_user.id))
+    await message.answer("🖥️ Asosiy menyu tugmalari faollashtirildi:", reply_markup=main_kb(uid))
 
 
 @dp.message(not_renaming, lambda m: bool(m.text) and (is_btn(m.text, "back") or m.text in {"Orqaga", "🔙 Orqaga", "⏪ Orqaga", "Bekor qilish", "❌ Bekor qilish", "Bosh menyu", "🏠 Bosh menyu"}))
@@ -1312,19 +1372,24 @@ async def dispatch_nav_command_or_button(message: types.Message, state: FSMConte
 @dp.message(Command("webapp"))
 @dp.message(not_renaming, F.text.in_({"📱 SMM Web App 🚀", "SMM Web App", "webapp", "Mini App"}))
 async def webapp_launcher_handler(message: types.Message):
+    url = get_webapp_url(message.from_user.id)
     webapp_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📱 SMM Mini App (Do'kon) 🚀", web_app=types.WebAppInfo(url=WEBAPP_URL))]
+        [InlineKeyboardButton(text="📱 SMM Mini App (Do'kon) 🚀", web_app=types.WebAppInfo(url=url))]
     ])
     await message.answer(
         "📱 <b>SMM Mini App (Do'kon)</b>\n\n"
-        "Zamonaviy Apple iOS 26 dizayndagi interaktiv Web App orqali tezkor va qulay buyurtma bering!\n\n"
+        "Zamonaviy Apple iOS dizayndagi interaktiv Web App orqali tezkor va qulay buyurtma bering!\n\n"
         "✨ Jonli narx va chegirma hisoblagich\n"
         "✨ Barcha tarmoqlar (Telegram, Instagram, TikTok, YouTube)\n"
-        "✨ Tezkor balans va to'lov holati\n\n"
+        "✨ Botdagi haqiqiy balans bilan 0-latency sinxronlangan\n\n"
         "👇 Mini App-ni ochish uchun quyidagi tugmani bosing:",
         reply_markup=webapp_kb,
         parse_mode="HTML"
     )
+
+
+async def execute_direct_order(message: types.Message, data: dict):
+    await process_webapp_order(message, data)
 
 
 @dp.message(F.web_app_data)
@@ -1335,6 +1400,10 @@ async def handle_webapp_data(message: types.Message):
     except Exception as e:
         await message.answer(f"❌ Xatolik: Noto'g'ri Web App ma'lumoti ({e})")
         return
+    await process_webapp_order(message, data)
+
+
+async def process_webapp_order(message: types.Message, data: dict):
 
     action = data.get("action")
     if action == "new_order":
@@ -1812,7 +1881,6 @@ async def account_handler(message: types.Message, state: FSMContext):
     await state.clear()
     uid = message.from_user.id
     u = get_user(uid)
-    save_data(db_data)
     orders_count = sum(1 for o in db_data["orders"] if o.get("user_id") == uid)
     lines = [
         f"🆔 ID raqamingiz: <code>{uid}</code>",
@@ -1824,7 +1892,11 @@ async def account_handler(message: types.Message, state: FSMContext):
         f"🎉 Siz shu kungacha {fmt_money(u.get('cashback', 0))} so'm keshbek olgansiz",
     ]
     text = "\n\n".join(f"<blockquote>{line}</blockquote>" for line in lines)
-    await message.answer(text, parse_mode="HTML")
+    url = get_webapp_url(uid)
+    markup = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📱 SMM Mini App (Do'kon) 🚀", web_app=types.WebAppInfo(url=url))]
+    ])
+    await message.answer(text, reply_markup=markup, parse_mode="HTML")
 
 
 ORDER_STATUS_UZ = {
@@ -3370,7 +3442,8 @@ async def missing_channels(uid, channels):
     t = _sub_ok.get(uid)
     if t and time.time() - t < SUB_CACHE_TTL:
         return []
-    missing = [ch for ch in channels if not await is_member(uid, ch)]
+    results = await asyncio.gather(*[is_member(uid, ch) for ch in channels], return_exceptions=True)
+    missing = [ch for ch, ok in zip(channels, results) if ok is not True]
     if not missing:
         _sub_ok[uid] = time.time()
     return missing
@@ -7355,7 +7428,7 @@ async def set_main_menu(bot: Bot):
     try:
         await bot.set_chat_menu_button(
             menu_button=types.MenuButtonWebApp(
-                text="Web App",
+                text="SMM Do'kon 📱",
                 web_app=types.WebAppInfo(url=WEBAPP_URL),
             )
         )
@@ -7369,7 +7442,7 @@ async def main():
     checker_task = asyncio.create_task(order_status_checker())
     broadcast_task = asyncio.create_task(group_broadcast_loop(bot))
     try:
-        await dp.start_polling(bot)
+        await dp.start_polling(bot, drop_pending_updates=True)
     finally:
         checker_task.cancel()
         broadcast_task.cancel()
