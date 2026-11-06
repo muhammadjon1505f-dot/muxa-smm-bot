@@ -760,10 +760,8 @@ def get_webapp_url(uid: int) -> str:
 def build_kb(uid):
     rest_keys = [k for k in MAIN_KEYS if k != "services"]
     rest_btns = [main_button(k) for k in rest_keys]
-    url = get_webapp_url(uid)
-    webapp_btn = KeyboardButton(text="📱 SMM Mini App 🚀", web_app=types.WebAppInfo(url=url))
     rows = [
-        [main_button("services"), webapp_btn]
+        [main_button("services")]
     ]
     rows += [rest_btns[i:i + 2] for i in range(0, len(rest_btns), 2)]
     if uid == OWNER_ID:
