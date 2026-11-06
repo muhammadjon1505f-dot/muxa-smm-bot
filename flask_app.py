@@ -42,6 +42,13 @@ async def _handle_update_async(data: dict):
         await dp.feed_update(bot, update)
     except Exception as e:
         app.logger.error(f"Update qayta ishlashda xatolik: {e}")
+        if hasattr(bot, "session") and hasattr(bot.session, "_session"):
+            try:
+                if bot.session._session and not bot.session._session.closed:
+                    await bot.session._session.close()
+            except Exception:
+                pass
+            bot.session._session = None
 
 
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
@@ -75,9 +82,16 @@ def set_webhook_route():
             await set_main_menu(bot)
         except Exception:
             pass
-        result = await bot.set_webhook(url=webhook_url, drop_pending_updates=True)
-        info = await bot.get_webhook_info()
-        return result, info
+        for attempt in range(3):
+            try:
+                result = await bot.set_webhook(url=webhook_url, drop_pending_updates=True)
+                info = await bot.get_webhook_info()
+                return result, info
+            except Exception:
+                if attempt < 2:
+                    await asyncio.sleep(0.5)
+                else:
+                    raise
 
     try:
         loop = get_worker_loop()
@@ -96,7 +110,14 @@ def set_webhook_route():
 @app.route("/webhook_info", methods=["GET"])
 def webhook_info_route():
     async def _info():
-        return await bot.get_webhook_info()
+        for attempt in range(3):
+            try:
+                return await bot.get_webhook_info()
+            except Exception:
+                if attempt < 2:
+                    await asyncio.sleep(0.5)
+                else:
+                    raise
 
     try:
         loop = get_worker_loop()

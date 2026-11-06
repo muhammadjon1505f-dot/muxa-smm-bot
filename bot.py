@@ -178,14 +178,21 @@ def _strip_icons(markup):
 
 
 try:
-    from aiogram.exceptions import TelegramBadRequest
+    from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError
     from aiogram.client.session.middlewares.base import BaseRequestMiddleware
 
     class IconFallbackMiddleware(BaseRequestMiddleware):
-        # Premium emoji ikonkasi qabul qilinmasa, tugmalarni ikonkasiz qayta yuboradi
+        # Premium emoji ikonkasi qabul qilinmasa yoki tarmoq xatosi bo'lsa qayta ishlaydi
         async def __call__(self, make_request, bot, method):
             try:
                 return await make_request(bot, method)
+            except TelegramNetworkError as e:
+                # PythonAnywhere proksi 503 bersa yoki uzilsa, 0.3 soniyada 1 marta qayta urinish
+                err_str = str(e).lower()
+                if "503" in err_str or "unavailable" in err_str or "connection" in err_str:
+                    await asyncio.sleep(0.3)
+                    return await make_request(bot, method)
+                raise
             except TelegramBadRequest as e:
                 markup = getattr(method, "reply_markup", None)
                 if "not modified" in str(e).lower() or not _has_icons(markup):
