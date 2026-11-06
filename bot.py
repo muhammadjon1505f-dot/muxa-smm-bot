@@ -816,6 +816,60 @@ def is_admin_btn(text, key):
     return False
 
 
+def is_nav_command_or_button(text):
+    if not text:
+        return False
+    t = text.strip()
+    if t.startswith("/"):
+        return True
+
+    main_keys = [
+        "services", "orders", "account", "deposit", "earn",
+        "hamkorlik", "guide", "support", "buy", "confirm", "cancel", "back", "search"
+    ]
+    for k in main_keys:
+        if is_btn(t, k):
+            return True
+
+    nav_texts = {
+        "🌐  Xizmatlar  🌐", "🌐 Xizmatlar", "Xizmatlar",
+        "📦 Buyurtmalarim", "Buyurtmalarim", "Buyurtmalar",
+        "💳 Hisobim", "Hisobim", "💰 Balans", "Balans",
+        "💰 Pul kiritish", "Pul kiritish", "⭐ Telegram Stars", "Telegram Stars", "Stars",
+        "🔗 Pul yeg'ish", "Pul yeg'ish", "Pul yig'ish", "🔗 Pul yig'ish",
+        "🤝 Hamkorlik dasturi", "Hamkorlik", "Hamkorlik dasturi",
+        "📖 Qo'llanma", "Qo'llanma",
+        "🆘 Qo'llab-quvvatlash", "Qo'llab-quvvatlash", "Yordam",
+        "🔍 Qidiruv", "Qidiruv",
+        "📱 SMM Web App 🚀", "SMM Web App", "webapp", "Mini App",
+        "⏪ Orqaga", "🔙 Orqaga", "Orqaga", "Bekor qilish", "❌ Bekor qilish",
+        "Bosh menyu", "🏠 Bosh menyu", "Asosiy menyu", "🖥️ Asosiy menyu",
+    }
+    if t in nav_texts:
+        return True
+
+    admin_keys = [
+        "adm_users", "adm_bot_btns", "adm_referral", "adm_payment",
+        "adm_orders", "adm_broadcast", "adm_stats", "adm_channels",
+        "adm_order_channel", "adm_free_add", "adm_free_del", "adm_back", "adm_admin_btns"
+    ]
+    for ak in admin_keys:
+        if is_admin_btn(t, ak):
+            return True
+
+    admin_texts = {
+        "👤 Foydalanuvchilar", "🔘 Bot tugmalari", "💸 Referal/Bonus",
+        "💳 To'lov tizimlar", "🛒 Buyurtmalar", "📨 Xabar yuborish",
+        "📊 Statistika", "📢 Majburiy a'zolik", "📡 Buyurtma kanali",
+        "➕ Tekin Xizmatlar Qo'shish", "Xizmat O'chirish 🗑", "🔙 Orqaga",
+        "Boshqaruv 🗄️"
+    }
+    if t in admin_texts:
+        return True
+
+    return False
+
+
 def admin_main_button(key):
     cfg = admin_btn_cfg(key)
     kw = sk(admin_btn_style(key))
@@ -1135,6 +1189,16 @@ class RegisterMiddleware(BaseMiddleware):
                 print("Ro'yxatga olishda xato:", e)
             if await force_sub_gate(event, user):
                 return None  # majburiy kanallarga a'zo bo'lmagan — botdan foydalana olmaydi
+
+        # Har qanday menyu tugmasi yoki buyruq yuborilganda, mavjud state avtomatik tozalansin
+        if isinstance(event, types.Message) and event.text:
+            if is_nav_command_or_button(event.text):
+                state: FSMContext = data.get("state")
+                if state:
+                    curr = await state.get_state()
+                    if curr and curr not in RENAME_INPUT_STATES:
+                        await state.clear()
+
         return await handler(event, data)
 
 
@@ -1180,6 +1244,62 @@ async def start_handler(message: types.Message, state: FSMContext):
         parse_mode="HTML"
     )
     await message.answer("🖥️ Asosiy menyu tugmalari faollashtirildi:", reply_markup=main_kb(message.from_user.id))
+
+
+@dp.message(not_renaming, lambda m: bool(m.text) and (is_btn(m.text, "back") or m.text in {"Orqaga", "🔙 Orqaga", "⏪ Orqaga", "Bekor qilish", "❌ Bekor qilish", "Bosh menyu", "🏠 Bosh menyu"}))
+async def universal_back_handler(message: types.Message, state: FSMContext):
+    await state.clear()
+    await message.answer("🖥️ Asosiy menyudasiz", reply_markup=main_kb(message.from_user.id))
+
+
+async def dispatch_nav_command_or_button(message: types.Message, state: FSMContext):
+    await state.clear()
+    t = (message.text or "").strip()
+    if is_btn(t, "earn"):
+        await earn_handler(message, state)
+    elif is_btn(t, "deposit"):
+        await deposit_handler(message, state)
+    elif is_btn(t, "account") or t in {"💰 Balans", "Balans", "Hisobim", "💳 Hisobim"}:
+        await account_handler(message, state)
+    elif is_btn(t, "orders") or t in {"📦 Buyurtmalarim", "Buyurtmalarim", "Buyurtmalar"}:
+        await my_orders_handler(message, state)
+    elif is_btn(t, "services") or t in {"🌐  Xizmatlar  🌐", "🌐 Xizmatlar", "Xizmatlar"}:
+        await services_handler(message, state)
+    elif is_btn(t, "hamkorlik"):
+        await hamkorlik_handler(message, state)
+    elif is_btn(t, "guide"):
+        await guide_handler(message, state)
+    elif is_btn(t, "support"):
+        await support_handler(message, state)
+    elif is_btn(t, "search"):
+        await state.set_state(ServiceSearchState.waiting_for_query)
+        await message.answer("🔍 Qidirmoqchi bo'lgan xizmat nomini yozing:")
+    elif is_admin_btn(t, "adm_payment") or t == "💳 To'lov tizimlar":
+        await payment_types_handler(message, state)
+    elif is_admin_btn(t, "adm_stats") or t in ("/stat", "/stats", "📊 Statistika", "Statistika"):
+        await admin_stats_handler(message, state)
+    elif is_admin_btn(t, "adm_users") or t == "👤 Foydalanuvchilar":
+        await users_menu_handler(message, state)
+    elif is_admin_btn(t, "adm_orders") or t == "🛒 Buyurtmalar":
+        await admin_orders_entry(message, state)
+    elif is_admin_btn(t, "adm_broadcast") or t == "📨 Xabar yuborish":
+        await bc_entry(message, state)
+    elif is_admin_btn(t, "adm_bot_btns") or t == "🔘 Bot tugmalari":
+        await bot_buttons_menu_handler(message, state)
+    elif is_admin_btn(t, "adm_referral") or t == "💸 Referal/Bonus":
+        await referral_settings_handler(message, state)
+    elif is_admin_btn(t, "adm_forced") or t == "📢 Majburiy a'zolik":
+        await force_admin_handler(message, state)
+    elif is_admin_btn(t, "adm_channel") or t == "📡 Buyurtma kanali":
+        await order_channel_handler(message, state)
+    elif is_btn(t, "back") or t in {"Orqaga", "🔙 Orqaga", "⏪ Orqaga", "Bekor qilish", "❌ Bekor qilish", "Bosh menyu", "🏠 Bosh menyu"}:
+        await message.answer("🖥️ Asosiy menyudasiz", reply_markup=main_kb(message.from_user.id))
+    elif t.startswith("/start"):
+        await start_handler(message, state)
+    elif t.startswith("/admin") and message.from_user.id == OWNER_ID:
+        await message.answer("🔐 Admin panel:", reply_markup=build_admin_kb())
+    else:
+        await message.answer("🖥️ Asosiy menyudasiz", reply_markup=main_kb(message.from_user.id))
 
 
 @dp.message(Command("webapp"))
@@ -1848,6 +1968,9 @@ def _api_error(resp):
 
 @dp.message(StateFilter(OrderInfoState.waiting_for_id))
 async def order_id_received(message: types.Message, state: FSMContext):
+    if is_nav_command_or_button(message.text):
+        await dispatch_nav_command_or_button(message, state)
+        return
     d = await state.get_data()
     mode, page = d.get("mode", "info"), d.get("page", 1)
     back = kb([back_btn(f"ord_p_{page}")])
@@ -2068,6 +2191,9 @@ async def user_stars_fast_cb(call: types.CallbackQuery, state: FSMContext):
 
 @dp.message(StarsDepositState.waiting_for_stars)
 async def user_stars_amount_input(message: types.Message, state: FSMContext):
+    if is_nav_command_or_button(message.text):
+        await dispatch_nav_command_or_button(message, state)
+        return
     text = (message.text or "").strip()
     if not text.isdigit() or int(text) <= 0:
         await message.answer("⚠️ Iltimos, musbat butun son kiriting (Masalan: <code>1</code> yoki <code>10</code>):", parse_mode="HTML")
@@ -2229,6 +2355,9 @@ async def deposit_cancel(message: types.Message, state: FSMContext):
 
 @dp.message(StateFilter(DepositState.waiting_for_amount))
 async def deposit_amount(message: types.Message, state: FSMContext):
+    if is_nav_command_or_button(message.text):
+        await dispatch_nav_command_or_button(message, state)
+        return
     raw = (message.text or "").strip().replace(" ", "").replace(",", "")
     if not raw.isdigit() or len(raw) > 12:
         await message.answer("❌ Faqat son kiriting. Masalan: 10000", reply_markup=deposit_back_kb())
@@ -2264,6 +2393,9 @@ def deposit_admin_markup(dep_id):
 
 @dp.message(StateFilter(DepositState.waiting_for_receipt))
 async def deposit_receipt(message: types.Message, state: FSMContext):
+    if message.text and is_nav_command_or_button(message.text):
+        await dispatch_nav_command_or_button(message, state)
+        return
     file_id, file_type = None, None
     if message.photo:
         file_id, file_type = message.photo[-1].file_id, "photo"
@@ -2599,6 +2731,9 @@ async def support_question_cancel_cb(call: types.CallbackQuery, state: FSMContex
 
 @dp.message(StateFilter(SupportState.waiting_for_question))
 async def support_question_received(message: types.Message, state: FSMContext):
+    if message.text and is_nav_command_or_button(message.text):
+        await dispatch_nav_command_or_button(message, state)
+        return
     text = (message.text or message.caption or "").strip()
     if not text:
         await message.answer("❌ Iltimos, savolingizni matn ko'rinishida yozing:")
@@ -4193,6 +4328,9 @@ def search_result_text(net, it):
 
 @dp.message(StateFilter(ServiceSearchState.waiting_for_query))
 async def user_search_query(message: types.Message, state: FSMContext):
+    if is_nav_command_or_button(message.text):
+        await dispatch_nav_command_or_button(message, state)
+        return
     query = (message.text or "").strip()
     cancel_kb = kb([[InlineKeyboardButton(text="❌ Bekor qilish", callback_data="u_search_cancel", **sk("danger"))]])
     if not query:
@@ -4462,6 +4600,9 @@ async def order_again(call: types.CallbackQuery, state: FSMContext):
 
 @dp.message(StateFilter(OrderState.waiting_for_link))
 async def order_link(message: types.Message, state: FSMContext):
+    if is_nav_command_or_button(message.text):
+        await dispatch_nav_command_or_button(message, state)
+        return
     link = (message.text or "").strip()
     data = await state.get_data()
     back = kb([back_btn(f"u_srv_{data['ni']}_{data['ci']}_{data['si']}")])
@@ -4479,6 +4620,9 @@ async def order_link(message: types.Message, state: FSMContext):
 
 @dp.message(StateFilter(OrderState.waiting_for_quantity))
 async def order_quantity(message: types.Message, state: FSMContext):
+    if is_nav_command_or_button(message.text):
+        await dispatch_nav_command_or_button(message, state)
+        return
     data = await state.get_data()
     items = get_items(data["net"], data["cat"])
     back = kb([back_btn(f"u_srv_{data['ni']}_{data['ci']}_{data['si']}")])
