@@ -1,10 +1,11 @@
 """
 PythonAnywhere Bepul Tarif (Free Tier) uchun Flask WSGI Webhook Server.
-Ushbu fayl PythonAnywhere'da botni 24/7 uzluksiz ishlashini ta'minlaydi.
+Ushbu fayl PythonAnywhere'da botni 24/7 uzluksiz va maksimal tezlikda ishlashini ta'minlaydi.
 """
 import os
 import sys
 import asyncio
+import threading
 from flask import Flask, request, jsonify, abort
 from aiogram.types import Update
 
@@ -18,30 +19,29 @@ from bot import bot, dp, BOT_TOKEN, set_main_menu
 
 app = Flask(__name__)
 
+# Doimiy background event loop — ulanishlarni qayta ishlatish orqali maksimal tezlik ta'minlanadi
+_loop = None
+_thread = None
+_lock = threading.Lock()
+
+
+def get_worker_loop():
+    global _loop, _thread
+    if _loop is None or _thread is None or not _thread.is_alive():
+        with _lock:
+            if _loop is None or _thread is None or not _thread.is_alive():
+                _loop = asyncio.new_event_loop()
+                _thread = threading.Thread(target=_loop.run_forever, daemon=True)
+                _thread.start()
+    return _loop
+
 
 async def _handle_update_async(data: dict):
-    # Oldingi sessiyani tozalash (AiohttpSession event loop bilan to'g'ri ishlashi uchun)
-    if hasattr(bot, "session") and bot.session:
-        if hasattr(bot.session, "_session") and bot.session._session is not None:
-            if not bot.session._session.closed:
-                try:
-                    await bot.session._session.close()
-                except Exception:
-                    pass
-            bot.session._session = None
-            
     try:
         update = Update.model_validate(data, context={"bot": bot})
         await dp.feed_update(bot, update)
-    finally:
-        if hasattr(bot, "session") and bot.session:
-            if hasattr(bot.session, "_session") and bot.session._session is not None:
-                if not bot.session._session.closed:
-                    try:
-                        await bot.session._session.close()
-                    except Exception:
-                        pass
-                bot.session._session = None
+    except Exception as e:
+        app.logger.error(f"Update qayta ishlashda xatolik: {e}")
 
 
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
@@ -52,10 +52,11 @@ def telegram_webhook():
             return jsonify({"ok": True}), 200
 
         try:
-            asyncio.run(_handle_update_async(data))
+            loop = get_worker_loop()
+            future = asyncio.run_coroutine_threadsafe(_handle_update_async(data), loop)
+            future.result(timeout=12)
         except Exception as e:
-            app.logger.error(f"Update qayta ishlashda xatolik: {e}")
-            # Telegram qayta-qayta eskirgan so'rovlarni yuborib turmasligi uchun 200 qaytaramiz
+            app.logger.error(f"Update timeout yoki xato: {e}")
             return jsonify({"ok": True, "handled_error": str(e)}), 200
 
         return jsonify({"ok": True}), 200
@@ -64,9 +65,7 @@ def telegram_webhook():
 
 @app.route("/set_webhook", methods=["GET"])
 def set_webhook_route():
-    # Telegramga webhook manzilini avtomatik ro'yxatdan o'tkazish
     host = request.host_url.rstrip("/")
-    # PythonAnywhere har doim https ishlatadi
     if host.startswith("http://"):
         host = "https://" + host[7:]
     webhook_url = f"{host}/{BOT_TOKEN}"
@@ -78,11 +77,12 @@ def set_webhook_route():
             pass
         result = await bot.set_webhook(url=webhook_url, drop_pending_updates=True)
         info = await bot.get_webhook_info()
-        await bot.session.close()
         return result, info
 
     try:
-        result, info = asyncio.run(_setup())
+        loop = get_worker_loop()
+        future = asyncio.run_coroutine_threadsafe(_setup(), loop)
+        result, info = future.result(timeout=15)
         return jsonify({
             "status": "success" if result else "failed",
             "webhook_url": webhook_url,
@@ -96,12 +96,12 @@ def set_webhook_route():
 @app.route("/webhook_info", methods=["GET"])
 def webhook_info_route():
     async def _info():
-        info = await bot.get_webhook_info()
-        await bot.session.close()
-        return info
+        return await bot.get_webhook_info()
 
     try:
-        info = asyncio.run(_info())
+        loop = get_worker_loop()
+        future = asyncio.run_coroutine_threadsafe(_info(), loop)
+        info = future.result(timeout=15)
         return jsonify({
             "url": info.url,
             "has_custom_certificate": info.has_custom_certificate,
@@ -131,7 +131,7 @@ def index():
     </head>
     <body>
         <div class="card">
-            <h1>🤖 Muxa SMM Bot (24/7 Webhook)</h1>
+            <h1>🤖 Muxa SMM Bot (High-Speed 24/7 Webhook)</h1>
             <p>Bot PythonAnywhere Free Hosting serverida muvaffaqiyatli ishga tushirildi.</p>
             <p>Agar bot xabarlarga javob bermayotgan bo'lsa, quyidagi tugmani bosib Webhookni bir marta faollashtiring:</p>
             <a href="/set_webhook" class="btn">🚀 Webhookni Faollashtirish</a>

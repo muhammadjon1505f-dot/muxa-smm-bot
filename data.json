@@ -254,6 +254,10 @@
             "chat_title": "Ybanat",
             "interval": 300,
             "message": "🚀 <b>Muxa SMM — Tezkor va Arzon SMM Xizmatlari!</b>\n\n✨ <b>Telegram:</b> Obunachilar, ko'rishlar, reaksiyalar\n📸 <b>Instagram:</b> Obunachilar, layklar, video prosmotr\n🎬 <b>YouTube & TikTok:</b> 100% ishonchli va sifatli!\n\n⚡️ Qulay narxlar va 24/7 avtomatik yetkazib berish!\n\n👇 Buyurtma berish uchun botimizga kiring:\n👉 @Muxa_aibot"
+        },
+        "stars": {
+            "active": true,
+            "rate": 200
         }
     },
     "payment_systems": [
