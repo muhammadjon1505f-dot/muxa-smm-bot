@@ -20,13 +20,28 @@ app = Flask(__name__)
 
 
 async def _handle_update_async(data: dict):
+    # Oldingi sessiyani tozalash (AiohttpSession event loop bilan to'g'ri ishlashi uchun)
+    if hasattr(bot, "session") and bot.session:
+        if hasattr(bot.session, "_session") and bot.session._session is not None:
+            if not bot.session._session.closed:
+                try:
+                    await bot.session._session.close()
+                except Exception:
+                    pass
+            bot.session._session = None
+            
     try:
         update = Update.model_validate(data, context={"bot": bot})
         await dp.feed_update(bot, update)
     finally:
-        # Har bir so'rovdan keyin aiohttp sessiyasini yopish (Event loop xatolarining oldini oladi)
         if hasattr(bot, "session") and bot.session:
-            await bot.session.close()
+            if hasattr(bot.session, "_session") and bot.session._session is not None:
+                if not bot.session._session.closed:
+                    try:
+                        await bot.session._session.close()
+                    except Exception:
+                        pass
+                bot.session._session = None
 
 
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
@@ -34,13 +49,14 @@ def telegram_webhook():
     if request.headers.get("content-type", "").startswith("application/json"):
         data = request.get_json(force=True, silent=True)
         if not data:
-            return jsonify({"ok": False, "error": "Bo'sh JSON"}), 400
+            return jsonify({"ok": True}), 200
 
         try:
             asyncio.run(_handle_update_async(data))
         except Exception as e:
             app.logger.error(f"Update qayta ishlashda xatolik: {e}")
-            return jsonify({"ok": False, "error": str(e)}), 500
+            # Telegram qayta-qayta eskirgan so'rovlarni yuborib turmasligi uchun 200 qaytaramiz
+            return jsonify({"ok": True, "handled_error": str(e)}), 200
 
         return jsonify({"ok": True}), 200
     abort(403)
