@@ -132,7 +132,13 @@ for _o in db_data["orders"]:
 db_data["settings"]["last_order_id"] = _last_id
 save_data(db_data)
 
-bot = Bot(token=BOT_TOKEN)
+TELEGRAM_PROXY = os.getenv("TELEGRAM_PROXY")
+if TELEGRAM_PROXY:
+    from aiogram.client.session.aiohttp import AiohttpSession
+    bot = Bot(token=BOT_TOKEN, session=AiohttpSession(proxy=TELEGRAM_PROXY))
+else:
+    bot = Bot(token=BOT_TOKEN)
+
 dp = Dispatcher(storage=MemoryStorage())
 _newly_registered = set()  # /start orqali endigina ro'yxatdan o'tgan foydalanuvchilar (referal uchun)
 _support_questions = {}  # uid(str) -> foydalanuvchining oxirgi qo'llab-quvvatlash savoli
