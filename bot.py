@@ -559,7 +559,7 @@ BTN_DEFAULTS = {
     "services": "🌐  Xizmatlar  🌐",
     "orders": "📦 Buyurtmalarim",
     "account": "💳 Hisobim",
-    "deposit": "⭐ Telegram Stars",
+    "deposit": "💰 Pul kiritish",
     "earn": "🔗 Pul yeg'ish",
     "hamkorlik": "🤝 Hamkorlik dasturi",
     "guide": "📖 Qo'llanma",
@@ -1930,13 +1930,57 @@ async def order_id_received(message: types.Message, state: FSMContext):
         await message.answer(f"❌ Buyurtmani bekor qilib bo'lmadi.\nSabab: {err}")
 
 
-# ---------------------------------------------------------------- PUL KIRITISH (TELEGRAM STARS AVTOMATIK)
+# ---------------------------------------------------------------- PUL KIRITISH (TELEGRAM STARS VA KARTALAR)
 def is_stars_active():
     return db_data.setdefault("settings", {}).setdefault("stars", {"active": True, "rate": 200}).get("active", True)
 
 
 def get_stars_rate():
     return db_data.setdefault("settings", {}).setdefault("stars", {"active": True, "rate": 200}).get("rate", 200)
+
+
+def user_active_payments():
+    return [p for p in db_data.get("payment_systems", []) if p.get("active", True)]
+
+
+def min_deposit():
+    try:
+        return max(float(db_data["settings"].get("min_deposit", 0) or 0), 1)
+    except (TypeError, ValueError):
+        return 1
+
+
+def user_payment_list_text():
+    text = "💳 <b>To'lov usulini tanlang:</b>\n\n"
+    desc = db_data.get("settings", {}).get("deposit_desc")
+    if desc:
+        text += f"<i>{escape(desc)}</i>\n\n"
+    if is_stars_active():
+        rate = get_stars_rate()
+        text += (
+            "⭐ <b>Telegram Stars (Avtomatik to'lov):</b>\n"
+            f"— 1 ta Stars = <b>{rate:,} so'm</b>\n"
+            "— To'lov amalga oshishi bilan balansingiz <b>bir zumda avtomatik</b> to'ldiriladi!\n\n"
+        )
+    cards = user_active_payments()
+    if cards:
+        text += (
+            "💳 <b>Karta / Boshqa to'lov tizimlari:</b>\n"
+            "— Kartaga to'lov qilib chekni yuborasiz va admin tasdiqlagach balansingiz to'ldiriladi.\n\n"
+        )
+    text += "<i>Quyidagi to'lov usullaridan birini tanlang:</i>"
+    return text.strip()
+
+
+def user_payment_list_markup():
+    rows = []
+    if is_stars_active():
+        rate = get_stars_rate()
+        rows.append([InlineKeyboardButton(text=f"⭐ Telegram Stars (1 ta = {rate:,} so'm)", callback_data="udep_stars")])
+    for i, p in enumerate(db_data.get("payment_systems", [])):
+        if p.get("active", True):
+            rows.append([InlineKeyboardButton(text=f"💳 {p['name']}", callback_data=f"udep_{i}")])
+    return kb(rows)
 
 
 def stars_fast_keyboard():
@@ -1950,6 +1994,9 @@ def stars_fast_keyboard():
             InlineKeyboardButton(text="⭐ 25", callback_data="stars_fast_25"),
             InlineKeyboardButton(text="⭐ 50", callback_data="stars_fast_50"),
             InlineKeyboardButton(text="⭐ 100", callback_data="stars_fast_100"),
+        ],
+        [
+            InlineKeyboardButton(text="🔙 Boshqa to'lov usullari", callback_data="udep_back"),
         ]
     ])
 
@@ -1957,18 +2004,15 @@ def stars_fast_keyboard():
 @dp.message(not_renaming, lambda m: bool(m.text) and is_btn(m.text, "deposit"))
 async def deposit_handler(message: types.Message, state: FSMContext):
     await state.clear()
-    rate = get_stars_rate()
-    await state.set_state(StarsDepositState.waiting_for_stars)
-    text = (
-        "⭐ <b>Telegram Stars</b>\n\n"
-        f"1 ta Stars = <b>{rate:,} so'm</b>\n\n"
-        "Qancha to'ldirmoqchisiz?"
-    )
-    await message.answer(text, reply_markup=stars_fast_keyboard(), parse_mode="HTML")
+    if not is_stars_active() and not user_active_payments():
+        await message.answer("❌ Hozircha faol to'lov usullari mavjud emas. Birozdan so'ng qayta urinib ko'ring.")
+        return
+    await message.answer(user_payment_list_text(), reply_markup=user_payment_list_markup(), parse_mode="HTML")
 
 
 @dp.callback_query(F.data == "udep_stars")
 async def user_deposit_stars_cb(call: types.CallbackQuery, state: FSMContext):
+    await state.clear()
     rate = get_stars_rate()
     await state.set_state(StarsDepositState.waiting_for_stars)
     text = (
@@ -2003,7 +2047,8 @@ async def create_stars_invoice_data(user_id: int, stars_count: int):
     )
     markup = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=f"⭐️ {stars_count} Stars to'lash", url=invoice_link)],
-        [InlineKeyboardButton(text="🔄 Boshqa miqdor", callback_data="udep_stars")]
+        [InlineKeyboardButton(text="🔄 Boshqa miqdor", callback_data="udep_stars")],
+        [InlineKeyboardButton(text="🔙 Boshqa to'lov usullari", callback_data="udep_back")]
     ])
     return True, (text, markup)
 
@@ -2104,43 +2149,171 @@ async def process_successful_payment(message: types.Message):
             pass
 
 
+def user_payment_card_text(p):
+    text = f"💳 <b>To'lov tizimi:</b>  {escape(p['name'])}\n\n"
+    text += f"💳 <b>Karta raqami:</b>  <code>{escape(str(p['card']))}</code>\n"
+    if p.get("owner"):
+        text += f"👤 <b>Karta egasi:</b>  {escape(str(p['owner']))}\n"
+    if p.get("desc"):
+        text += f"\n📋 {escape(p['desc'])}\n"
+    text += (
+        "\n📄 <b>Hisobingizni to'ldirish uchun quyidagi amallarni bajaring:</b>\n\n"
+        "1️⃣ Yuqoridagi kartaga to'lov qiling;\n"
+        "2️⃣ «✅ To'lov qildim» tugmasini bosing;\n"
+        "3️⃣ Kartaga tashlagan pul miqdorini kiriting;\n"
+        "4️⃣ To'lov chekini (skrinshot) yuboring;\n"
+        "5️⃣ Admin to'lovni tekshirib tasdiqlagach balansingizga qo'shiladi.\n\n"
+        "⚠️ <b>To'lovingiz 5 daqiqadan 24 soatgacha bo'lgan vaqt ichida amalga oshiriladi!</b>"
+    )
+    return text
+
+
+def deposit_back_kb():
+    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=btn_text("back"))]], resize_keyboard=True)
+
+
 @dp.callback_query(F.data == "udep_back")
 async def user_deposit_back_cb(call: types.CallbackQuery, state: FSMContext):
     await state.clear()
-    rate = get_stars_rate()
-    await state.set_state(StarsDepositState.waiting_for_stars)
-    text = (
-        "⭐ <b>Telegram Stars</b>\n\n"
-        f"1 ta Stars = <b>{rate:,} so'm</b>\n\n"
-        "Qancha to'ldirmoqchisiz?"
-    )
-    await safe_edit(call.message, text, stars_fast_keyboard(), parse_mode="HTML")
+    if not is_stars_active() and not user_active_payments():
+        await safe_edit(call.message, "❌ Hozircha faol to'lov usullari mavjud emas.", None)
+        await call.answer()
+        return
+    await safe_edit(call.message, user_payment_list_text(), user_payment_list_markup(), parse_mode="HTML")
     await call.answer()
 
 
-@dp.callback_query(F.data.regexp(r"^udep_"))
-async def user_deposit_legacy_redirect(call: types.CallbackQuery, state: FSMContext):
+@dp.callback_query(F.data.regexp(r"^udep_\d+$"))
+async def user_deposit_view_cb(call: types.CallbackQuery, state: FSMContext):
     await state.clear()
-    rate = get_stars_rate()
-    await state.set_state(StarsDepositState.waiting_for_stars)
-    text = (
-        "⭐ <b>Telegram Stars</b>\n\n"
-        f"1 ta Stars = <b>{rate:,} so'm</b>\n\n"
-        "Qancha to'ldirmoqchisiz?"
-    )
-    await safe_edit(call.message, text, stars_fast_keyboard(), parse_mode="HTML")
+    idx = int(call.data.replace("udep_", ""))
+    items = db_data.get("payment_systems", [])
+    if idx >= len(items) or not items[idx].get("active", True):
+        await call.answer("⚠️ Bu to'lov usuli topilmadi", show_alert=True)
+        return
+    p = items[idx]
+    markup = kb([
+        [InlineKeyboardButton(text="✅ To'lov qildim", callback_data=f"udep_paid_{idx}", style="success")],
+        back_btn("udep_back"),
+    ])
+    await safe_edit(call.message, user_payment_card_text(p), markup, parse_mode="HTML")
     await call.answer()
+
+
+@dp.callback_query(F.data.regexp(r"^udep_paid_\d+$"))
+async def user_deposit_paid_cb(call: types.CallbackQuery, state: FSMContext):
+    idx = int(call.data.rsplit("_", 1)[1])
+    items = db_data.get("payment_systems", [])
+    if idx >= len(items) or not items[idx].get("active", True):
+        await call.answer("⚠️ Bu to'lov usuli topilmadi", show_alert=True)
+        return
+    await state.clear()
+    await state.set_state(DepositState.waiting_for_amount)
+    await state.update_data(pay_name=items[idx]["name"])
+    await call.message.answer(
+        f"💵 <b>To'lov miqdorini kiriting:</b>\n\n<i>Minimal: {fmt_money(min_deposit())} so'm</i>",
+        parse_mode="HTML",
+        reply_markup=deposit_back_kb(),
+    )
+    await call.answer()
+
+
+@dp.message(
+    lambda m: bool(m.text) and is_btn(m.text, "back"),
+    StateFilter(DepositState.waiting_for_amount, DepositState.waiting_for_receipt),
+)
+async def deposit_cancel(message: types.Message, state: FSMContext):
+    await state.clear()
+    await message.answer("🖥️ Asosiy menyudasiz", reply_markup=main_kb(message.from_user.id))
+
+
+@dp.message(StateFilter(DepositState.waiting_for_amount))
+async def deposit_amount(message: types.Message, state: FSMContext):
+    raw = (message.text or "").strip().replace(" ", "").replace(",", "")
+    if not raw.isdigit() or len(raw) > 12:
+        await message.answer("❌ Faqat son kiriting. Masalan: 10000", reply_markup=deposit_back_kb())
+        return
+    amount = int(raw)
+    mn = min_deposit()
+    if amount < mn:
+        await message.answer(f"❌ Minimal to'lov miqdori: {fmt_money(mn)} so'm", reply_markup=deposit_back_kb())
+        return
+    await state.update_data(amount=amount)
+    await state.set_state(DepositState.waiting_for_receipt)
+    await message.answer("📝 To'lov chekini rasmga olib yuboring:", reply_markup=deposit_back_kb())
 
 
 def deposit_admin_text(d):
     return (
-        f"💳 <b>To'lov ma'lumoti #{d.get('id', '—')}</b>\n\n"
+        f"💳 <b>Yangi to'lov so'rovi #{d.get('id', '—')}</b>\n\n"
         f"👤 Foydalanuvchi: {escape(d.get('name') or '—')}\n"
         f"📱 Username: {escape(d.get('username') or '—')}\n"
         f"🆔 Telegram ID: <code>{d.get('user_id', '—')}</code>\n"
-        f"💳 To'lov turi: {escape(d.get('type') or d.get('payment') or 'Telegram Stars')}\n"
+        f"💳 To'lov tizimi: {escape(d.get('payment') or '—')}\n"
         f"💰 Miqdor: {fmt_money(d.get('amount', 0))} so'm\n"
         f"📅 Sana: {d.get('date', '—')}"
+    )
+
+
+def deposit_admin_markup(dep_id):
+    return kb([[
+        InlineKeyboardButton(text="✅ Tasdiqlash", callback_data=f"dep_ok_{dep_id}", style="success"),
+        InlineKeyboardButton(text="❌ Rad etish", callback_data=f"dep_no_{dep_id}", style="danger"),
+    ]])
+
+
+@dp.message(StateFilter(DepositState.waiting_for_receipt))
+async def deposit_receipt(message: types.Message, state: FSMContext):
+    file_id, file_type = None, None
+    if message.photo:
+        file_id, file_type = message.photo[-1].file_id, "photo"
+    elif message.document and (message.document.mime_type or "").startswith("image/"):
+        file_id, file_type = message.document.file_id, "document"
+    if not file_id:
+        await message.answer("❌ Iltimos, to'lov chekini rasm (screenshot) ko'rinishida yuboring.", reply_markup=deposit_back_kb())
+        return
+
+    data = await state.get_data()
+    if "amount" not in data:
+        await state.clear()
+        await message.answer("⚠️ So'rov topilmadi, qaytadan boshlang.", reply_markup=main_kb(message.from_user.id))
+        return
+
+    tg = message.from_user
+    dep_id = max([d.get("id", 0) for d in db_data.get("deposits", [])] or [0]) + 1
+    rec = {
+        "id": dep_id,
+        "user_id": tg.id,
+        "name": " ".join(x for x in (tg.first_name, tg.last_name) if x),
+        "username": f"@{tg.username}" if tg.username else "",
+        "payment": data.get("pay_name", ""),
+        "amount": data["amount"],
+        "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "status": "pending",
+        "file_id": file_id,
+        "file_type": file_type,
+    }
+    try:
+        if file_type == "photo":
+            await bot.send_photo(OWNER_ID, file_id, caption=deposit_admin_text(rec),
+                                 parse_mode="HTML", reply_markup=deposit_admin_markup(dep_id))
+        else:
+            await bot.send_document(OWNER_ID, file_id, caption=deposit_admin_text(rec),
+                                    parse_mode="HTML", reply_markup=deposit_admin_markup(dep_id))
+    except Exception as e:
+        print("To'lov so'rovi adminga yuborilmadi:", e)
+        await message.answer("❌ So'rovni yuborishda xatolik yuz berdi. Birozdan keyin qayta urinib ko'ring.",
+                             reply_markup=main_kb(tg.id))
+        await state.clear()
+        return
+
+    db_data.setdefault("deposits", []).append(rec)
+    save_data(db_data)
+    await state.clear()
+    await message.answer(
+        "⏳ <b>Qabul qilindi!</b>\n\n<i>To'lovingiz admin tomonidan tekshirilgach balansingizga qo'shiladi!</i>",
+        parse_mode="HTML",
+        reply_markup=main_kb(tg.id),
     )
 
 
@@ -3455,22 +3628,20 @@ async def ordch_user_cb(call: types.CallbackQuery):
     )
 
 
-# ---------------------------------------------------------------- ADMIN: TO'LOV TIZIMLARI (TELEGRAM STARS)
+# ---------------------------------------------------------------- ADMIN: TO'LOV TIZIMLARI (TELEGRAM STARS VA KARTALAR)
 def get_stars_admin_text():
     stars_cfg = db_data.setdefault("settings", {}).setdefault("stars", {"active": True, "rate": 200})
     st_text = "✅ Faol (Yoqilgan)" if stars_cfg.get("active", True) else "🚫 Nofaol (O'chirilgan)"
     rate = stars_cfg.get("rate", 200)
     return (
-        "⭐ <b>TELEGRAM STARS BOSHQARUV PANELI:</b>\n"
+        "⭐ <b>TELEGRAM STARS SOZLAMALARI:</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"🔘 <b>Holat:</b> {st_text}\n"
         f"💱 <b>Joriy kurs:</b> 1 ta Stars = <b>{rate:,} so'm</b>\n\n"
         "⚡️ <b>Qanday ishlaydi:</b>\n"
-        "• Mijoz Telegram Stars tugmasini bosganda: <code>1 ta Stars = 200 so'm</code> deb ko'rsatiladi;\n"
-        "• Foydalanuvchi qancha Stars to'ldirmoqchiligini kiritadi (masalan: 1 yoki 10);\n"
-        "• Bot: <code>1 ta Stars = 200 so'm bo'ladi</code> yoki <code>10 ta Stars = 2,000 so'm bo'ladi</code> deb to'lov havolasini yuboradi;\n"
-        "• To'lov qilishi bilanoq balansi <b>bir zumda avtomatik</b> to'ldiriladi!\n\n"
-        "<i>Kursni tezkor o'zgartirish uchun tugmalardan birini bosing yoki qo'lda kiriting:</i>"
+        "• Foydalanuvchi Telegram Stars orqali to'lov qilganda avtomatik uning hisobiga o'tkaziladi;\n"
+        "• Masalan: 1 Stars = 200 so'm, 10 Stars = 2,000 so'm;\n\n"
+        "<i>Kursni tezkor o'zgartirish uchun quyidagi tugmalardan birini bosing yoki qo'lda kiriting:</i>"
     )
 
 
@@ -3492,7 +3663,23 @@ def get_stars_admin_keyboard():
         [
             InlineKeyboardButton(text="✏️ Boshqa kurs kiritish", callback_data="stars_set_rate", style="primary"),
             InlineKeyboardButton(text=f"🔄 {toggle_text}", callback_data="stars_toggle", style="danger" if is_act else "success"),
+        ],
+        [
+            InlineKeyboardButton(text="🔙 Boshqaruv menyusiga qaytish", callback_data="back_to_pay_types")
         ]
+    ])
+
+
+def payment_types_menu_markup():
+    stars_cfg = db_data.setdefault("settings", {}).setdefault("stars", {"active": True, "rate": 200})
+    st_text = "✅ Faol" if stars_cfg.get("active", True) else "🚫 Nofaol"
+    rate = stars_cfg.get("rate", 200)
+    card_count = len([p for p in db_data.get("payment_systems", []) if p.get("active", True)])
+    
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"⭐ Telegram Stars ({st_text}, 1 ⭐ = {rate:,} so'm)", callback_data="pay_stars_cfg")],
+        [InlineKeyboardButton(text=f"💳 Karta / Boshqa tizimlar ({card_count} ta faol)", callback_data="pay_list")],
+        [InlineKeyboardButton(text="➕ Yangi to'lov tizimi qo'shish", callback_data="pay_add", style="primary")],
     ])
 
 
@@ -3500,7 +3687,19 @@ def get_stars_admin_keyboard():
 async def payment_types_handler(message: types.Message, state: FSMContext):
     await state.clear()
     if message.from_user.id == OWNER_ID:
-        await message.answer(get_stars_admin_text(), reply_markup=get_stars_admin_keyboard(), parse_mode="HTML")
+        stars_cfg = db_data.setdefault("settings", {}).setdefault("stars", {"active": True, "rate": 200})
+        st_text = "✅ Faol" if stars_cfg.get("active", True) else "🚫 Nofaol"
+        rate = stars_cfg.get("rate", 200)
+        card_count = len([p for p in db_data.get("payment_systems", []) if p.get("active", True)])
+        
+        text = (
+            "💳 <b>TO'LOV TIZIMLARI BOSHQARUVI:</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"⭐ <b>Telegram Stars:</b> {st_text} (1 ta Stars = <b>{rate:,} so'm</b>)\n"
+            f"💳 <b>Karta / Boshqa to'lovlar:</b> {card_count} ta faol tizim\n\n"
+            "Qaysi to'lov tizimini sozlamoqchisiz yoki yangisini ulamoqchisiz?"
+        )
+        await message.answer(text, reply_markup=payment_types_menu_markup(), parse_mode="HTML")
 
 
 @dp.callback_query(F.data.startswith("stars_setrate_"))
@@ -3577,17 +3776,19 @@ async def stars_rate_input_handler(message: types.Message, state: FSMContext):
 async def back_to_pay_types_cb(call: types.CallbackQuery, state: FSMContext):
     await state.clear()
     if call.from_user.id == OWNER_ID:
-        stars_cfg = db_data.setdefault("settings", {}).setdefault("stars", {"active": True, "rate": 100})
+        stars_cfg = db_data.setdefault("settings", {}).setdefault("stars", {"active": True, "rate": 200})
         st_text = "✅ Faol" if stars_cfg.get("active", True) else "🚫 Nofaol"
-        rate = stars_cfg.get("rate", 100)
-        await safe_edit(
-            call.message,
-            "💳 <b>To'lov tizimlari boshqaruvi</b>\n\n"
-            f"⭐ <b>Telegram Stars:</b> {st_text} (1 ⭐ = {rate:,} so'm)\n"
-            "Qaysi turdagi to'lov tizimini sozlaymiz?",
-            payment_types_menu_markup(),
-            parse_mode="HTML"
+        rate = stars_cfg.get("rate", 200)
+        card_count = len([p for p in db_data.get("payment_systems", []) if p.get("active", True)])
+        
+        text = (
+            "💳 <b>TO'LOV TIZIMLARI BOSHQARUVI:</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"⭐ <b>Telegram Stars:</b> {st_text} (1 ta Stars = <b>{rate:,} so'm</b>)\n"
+            f"💳 <b>Karta / Boshqa to'lovlar:</b> {card_count} ta faol tizim\n\n"
+            "Qaysi to'lov tizimini sozlamoqchisiz yoki yangisini ulamoqchisiz?"
         )
+        await safe_edit(call.message, text, payment_types_menu_markup(), parse_mode="HTML")
         await call.answer()
 
 
