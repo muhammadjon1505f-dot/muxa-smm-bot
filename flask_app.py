@@ -81,19 +81,65 @@ def telegram_webhook():
             return jsonify({"ok": True}), 200
 
         try:
+            # 0-Kechikish (0-Latency): Telegramga darhol 200 OK qaytarish,
+            # va xabarni background event loopda zudlik bilan qayta ishlash
             loop = get_worker_loop()
-            future = asyncio.run_coroutine_threadsafe(_handle_update_async(data), loop)
-            # 2 soniya ichida kutish, agar ko'p vaqt olsa ham 200 OK qaytarish (Telegram qayta so'rov yubormasligi uchun)
-            try:
-                future.result(timeout=2.5)
-            except TimeoutError:
-                pass
+            asyncio.run_coroutine_threadsafe(_handle_update_async(data), loop)
         except Exception as e:
-            app.logger.error(f"Update error: {e}")
-            return jsonify({"ok": True, "handled_error": str(e)}), 200
+            app.logger.error(f"Update background dispatch error: {e}")
 
         return jsonify({"ok": True}), 200
     abort(403)
+
+
+@app.route("/update", methods=["GET", "POST"])
+def auto_git_update():
+    """1-bosishda PythonAnywhere serverini GitHub'dan eng so'nggi kod bilan yangilash va qayta yuklash."""
+    import subprocess
+    try:
+        git_res = subprocess.check_output(
+            ["git", "pull", "origin", "main"],
+            stderr=subprocess.STDOUT,
+            text=True,
+            cwd=CURRENT_DIR
+        )
+
+        reloaded = []
+        if os.path.exists("/var/www"):
+            for f in os.listdir("/var/www"):
+                if f.endswith("_wsgi.py"):
+                    p = os.path.join("/var/www", f)
+                    try:
+                        os.utime(p, None)
+                        reloaded.append(f)
+                    except Exception:
+                        pass
+
+        return jsonify({
+            "ok": True,
+            "status": "success",
+            "git_output": git_res.strip(),
+            "reloaded_wsgi": reloaded,
+            "message": "✅ Server muvaffaqiyatli eng so'nggi kodga yangilandi va qayta yuklandi!"
+        }), 200
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/reload", methods=["GET"])
+def reload_server():
+    """WSGI serverni qayta yuklash."""
+    reloaded = []
+    if os.path.exists("/var/www"):
+        for f in os.listdir("/var/www"):
+            if f.endswith("_wsgi.py"):
+                p = os.path.join("/var/www", f)
+                try:
+                    os.utime(p, None)
+                    reloaded.append(f)
+                except Exception:
+                    pass
+    return jsonify({"ok": True, "reloaded": reloaded}), 200
 
 
 # --- WEBAPP REST API ENDPOINTS ---
@@ -317,12 +363,13 @@ def index():
         <div class="card">
             <h1>🤖 Muxa SMM Bot (High-Speed 24/7 Webhook)</h1>
             <p>Bot serveri muvaffaqiyatli ishlamoqda. Ping: <b>0.00000000000001ms</b>.</p>
-            <p>Webhookni faollashtirish uchun tugmani bosing:</p>
             <a href="/set_webhook" class="btn">🚀 Webhookni Faollashtirish</a>
             <br><br>
-            <a href="/webhook_info" style="color: #94a3b8; font-size: 13px;">🔍 Webhook Holatini Tekshirish</a>
+            <a href="/update" class="btn" style="background: #10b981; color: #fff;">🔄 Eng So'nggi Kodga Yangilash (Git Pull)</a>
             <br><br>
             <a href="/webapp" style="color: #38bdf8; font-size: 14px; font-weight: bold;">📱 WebApp Do'konga O'tish</a>
+            <br><br>
+            <a href="/webhook_info" style="color: #94a3b8; font-size: 13px;">🔍 Webhook Holatini Tekshirish</a>
         </div>
     </body>
     </html>
