@@ -6439,35 +6439,228 @@ async def bc_control_cb(call: types.CallbackQuery):
 
 
 # ---------------------------------------------------------------- ADMIN: STATISTIKA
-@dp.message(not_renaming, lambda m: bool(m.text) and is_admin_btn(m.text, "adm_stats"))
+def generate_full_statistics_text():
+    users = db_data.get("users", {})
+    orders = db_data.get("orders", [])
+    apis = db_data.get("apis", [])
+    items = db_data.get("items", {})
+    
+    total_users = len(users)
+    active_users = sum(1 for u in users.values() if not u.get("blocked", False))
+    paying_users = sum(1 for u in users.values() if u.get("deposited", 0) > 0)
+    blocked_users = sum(1 for u in users.values() if u.get("blocked", False))
+    
+    total_user_balance = sum(u.get("balance", 0) for u in users.values())
+    total_deposited = sum(u.get("deposited", 0) for u in users.values())
+    
+    total_orders = len(orders)
+    completed_orders = sum(1 for o in orders if str(o.get("status", "")).lower() in ("completed", "bajarildi", "success"))
+    pending_orders = sum(1 for o in orders if str(o.get("status", "")).lower() in ("pending", "in_progress", "processing", "kutilmoqda", "jarayonda"))
+    cancelled_orders = sum(1 for o in orders if str(o.get("status", "")).lower() in ("canceled", "cancelled", "refunded", "bekor qilindi"))
+    total_spent_on_orders = sum(o.get("price", 0) or o.get("cost", 0) for o in orders)
+    
+    now = datetime.now()
+    today_prefix = now.strftime("%Y-%m-%d")
+    today_users = sum(1 for u in users.values() if str(u.get("info", {}).get("joined", "")).startswith(today_prefix))
+    
+    total_services = sum(len(srvs) for srvs in items.values()) if items else 0
+    total_apis = len(apis)
+
+    text = (
+        "╔═══════════════════════╗\n"
+        "📊 <b>BOTNING MUKAMMAL JONLI STATISTIKASI</b>\n"
+        "╚═══════════════════════╝\n\n"
+        "👥 <b>Foydalanuvchilar Ko'rsatkichi:</b>\n"
+        f" ├ 👤 Jami a'zolar: <b>{total_users:,}</b> ta\n"
+        f" ├ 🟢 Faol foydalanuvchilar: <b>{active_users:,}</b> ta\n"
+        f" ├ 💳 Xarid qilganlar: <b>{paying_users:,}</b> ta\n"
+        f" ├ 🚫 Bloklanganlar: <b>{blocked_users:,}</b> ta\n"
+        f" └ 🆕 Bugun qo'shilganlar: <b>+{today_users}</b> ta\n\n"
+        "💰 <b>Moliya & Kassa Hisoboti:</b>\n"
+        f" ├ 💵 Jami kiritilgan mablag': <b>{total_deposited:,}</b> so'm\n"
+        f" ├ 💳 Foydalanuvchilar qoldig'i: <b>{total_user_balance:,}</b> so'm\n"
+        f" └ 🛒 Buyurtmalarga sarflangan: <b>{total_spent_on_orders:,}</b> so'm\n\n"
+        "📦 <b>SMM Buyurtmalar Holati:</b>\n"
+        f" ├ 📊 Jami buyurtmalar: <b>{total_orders:,}</b> ta\n"
+        f" ├ ✅ Bajarilgan: <b>{completed_orders:,}</b> ta\n"
+        f" ├ ⏳ Jarayonda: <b>{pending_orders:,}</b> ta\n"
+        f" └ ❌ Bekor qilingan: <b>{cancelled_orders:,}</b> ta\n\n"
+        "⚙️ <b>Tizim & Server Holati:</b>\n"
+        f" ├ 🔌 Ulangan SMM panellar: <b>{total_apis}</b> ta\n"
+        f" ├ 🛍 Faol xizmatlar soni: <b>{total_services}</b> ta\n"
+        " ├ 🌐 Xosting: <b>PythonAnywhere (24/7 Webhook)</b>\n"
+        f" └ 🕒 Yangilangan vaqt: <code>{now.strftime('%d.%m.%Y %H:%M:%S')}</code>\n\n"
+        "<i>Quyidagi tugmalar orqali batafsil tahlillarni ko'rishingiz mumkin:</i>"
+    )
+    return text
+
+
+def statistics_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🔄 Yangilash", callback_data="adm_stat_refresh"),
+            InlineKeyboardButton(text="👥 Foydalanuvchilar", callback_data="adm_stat_users_detail"),
+        ],
+        [
+            InlineKeyboardButton(text="🛒 Oxirgi buyurtmalar", callback_data="adm_stat_orders_detail"),
+            InlineKeyboardButton(text="🔌 Provayderlar", callback_data="adm_stat_apis_detail"),
+        ],
+        [
+            InlineKeyboardButton(text="💰 Kassa tafsilotlari", callback_data="adm_stat_finance_detail"),
+            InlineKeyboardButton(text="❌ Yopish", callback_data="adm_stat_close")
+        ]
+    ])
+
+
+@dp.message(not_renaming, lambda m: bool(m.text) and (is_admin_btn(m.text, "adm_stats") or m.text in ("/stat", "/stats", "📊 Statistika", "Statistika")))
 async def admin_stats_handler(message: types.Message, state: FSMContext):
     await state.clear()
     if message.from_user.id != OWNER_ID:
         return
+    text = generate_full_statistics_text()
+    await message.answer(text, parse_mode="HTML", reply_markup=statistics_keyboard())
+
+
+@dp.callback_query(F.data == "adm_stat_refresh")
+async def admin_stat_refresh_handler(call: types.CallbackQuery):
+    if call.from_user.id != OWNER_ID:
+        return await call.answer("Ruxsat berilmagan!", show_alert=True)
+    text = generate_full_statistics_text()
+    try:
+        await safe_edit(call.message, text, reply_markup=statistics_keyboard(), parse_mode="HTML")
+    except Exception:
+        pass
+    await call.answer("🔄 Statistika yangilandi!")
+
+
+@dp.callback_query(F.data == "adm_stat_users_detail")
+async def admin_stat_users_detail_handler(call: types.CallbackQuery):
+    if call.from_user.id != OWNER_ID:
+        return await call.answer("Ruxsat berilmagan!", show_alert=True)
     
     users = db_data.get("users", {})
-    orders = db_data.get("orders", [])
+    sorted_by_balance = sorted(users.items(), key=lambda x: x[1].get("balance", 0), reverse=True)[:5]
     
-    total_users = len(users)
-    active_users = sum(1 for u in users.values() if not u.get("blocked", False))
-    total_balance = sum(u.get("balance", 0) for u in users.values())
-    total_deposited = sum(u.get("deposited", 0) for u in users.values())
-    total_orders = len(orders)
-    
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    today_users = sum(1 for u in users.values() if str(u.get("info", {}).get("joined", "")).startswith(today_str))
+    msg = "👥 <b>ENG YUQORI BALANSGA EGA FOYDALANUVCHILAR:</b>\n\n"
+    if not sorted_by_balance:
+        msg += "<i>Foydalanuvchilar hali mavjud emas.</i>\n"
+    else:
+        for idx, (uid, uinfo) in enumerate(sorted_by_balance, 1):
+            uname = uinfo.get("info", {}).get("username")
+            uname_str = f"@{uname}" if uname else f"ID: {uid}"
+            bal = uinfo.get("balance", 0)
+            dep = uinfo.get("deposited", 0)
+            msg += f"<b>{idx}.</b> {uname_str} | 💰 {bal:,} so'm (Kiritgan: {dep:,} so'm)\n"
+            
+    msg += "\n🆕 <b>OXIRGI RO'YXATDAN O'TGANLAR:</b>\n"
+    sorted_recent = sorted(users.items(), key=lambda x: str(x[1].get("info", {}).get("joined", "")), reverse=True)[:5]
+    for idx, (uid, uinfo) in enumerate(sorted_recent, 1):
+        uname = uinfo.get("info", {}).get("username")
+        uname_str = f"@{uname}" if uname else f"ID: {uid}"
+        j_time = uinfo.get("info", {}).get("joined", "Noma'lum")
+        msg += f"<b>{idx}.</b> {uname_str} (Sana: {j_time})\n"
 
-    stats_text = (
-        f"📊 <b>Bot Statistikasi (Jonli):</b>\n\n"
-        f"👥 <b>Jami a'zolar:</b> <code>{total_users}</code> ta\n"
-        f"🟢 <b>Faol foydalanuvchilar:</b> <code>{active_users}</code> ta\n"
-        f"🆕 <b>Bugun qo'shilganlar:</b> <code>{today_users}</code> ta\n\n"
-        f"🛒 <b>Jami buyurtmalar:</b> <code>{total_orders}</code> ta\n"
-        f"💰 <b>Foydalanuvchilar balansi:</b> <code>{total_balance:,}</code> so'm\n"
-        f"💳 <b>Kiritilgan mablag':</b> <code>{total_deposited:,}</code> so'm\n\n"
-        f"⚡️ <b>Server:</b> PythonAnywhere (24/7 Webhook)"
+    back_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Statistikaga qaytish", callback_data="adm_stat_refresh")]
+    ])
+    await safe_edit(call.message, msg, reply_markup=back_kb, parse_mode="HTML")
+    await call.answer()
+
+
+@dp.callback_query(F.data == "adm_stat_orders_detail")
+async def admin_stat_orders_detail_handler(call: types.CallbackQuery):
+    if call.from_user.id != OWNER_ID:
+        return await call.answer("Ruxsat berilmagan!", show_alert=True)
+        
+    orders = db_data.get("orders", [])
+    recent_orders = orders[-5:] if orders else []
+    
+    msg = "🛒 <b>OXIRGI BUYURTMALAR TAHLILI:</b>\n\n"
+    if not recent_orders:
+        msg += "<i>Hozircha hech qanday buyurtma berilmagan.</i>\n"
+    else:
+        for o in reversed(recent_orders):
+            oid = o.get("id", "—")
+            srv = o.get("service_name") or o.get("name") or "Xizmat"
+            cnt = o.get("count") or o.get("quantity") or 0
+            prc = o.get("price") or o.get("cost") or 0
+            st = o.get("status", "Noma'lum")
+            msg += (
+                f"🆔 <b>Buyurtma #{oid}</b>\n"
+                f" • Xizmat: {srv}\n"
+                f" • Miqdor: {cnt:,} dona\n"
+                f" • Narx: {prc:,} so'm\n"
+                f" • Holat: <code>{st}</code>\n"
+                "─────────────────\n"
+            )
+            
+    back_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Statistikaga qaytish", callback_data="adm_stat_refresh")]
+    ])
+    await safe_edit(call.message, msg, reply_markup=back_kb, parse_mode="HTML")
+    await call.answer()
+
+
+@dp.callback_query(F.data == "adm_stat_apis_detail")
+async def admin_stat_apis_detail_handler(call: types.CallbackQuery):
+    if call.from_user.id != OWNER_ID:
+        return await call.answer("Ruxsat berilmagan!", show_alert=True)
+        
+    apis = db_data.get("apis", [])
+    msg = "🔌 <b>ULANGAN SMM PROVAYDERLAR (API):</b>\n\n"
+    if not apis:
+        msg += "<i>Hali hech qanday provayder ulanmagan. Boshqaruv orqali API qo'shishingiz mumkin.</i>\n"
+    else:
+        for idx, a in enumerate(apis, 1):
+            name = a.get("name", "Provayder")
+            url = a.get("url", "—")
+            msg += f"<b>{idx}.</b> <b>{name}</b>\n🔗 <code>{url}</code>\n\n"
+            
+    back_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Statistikaga qaytish", callback_data="adm_stat_refresh")]
+    ])
+    await safe_edit(call.message, msg, reply_markup=back_kb, parse_mode="HTML")
+    await call.answer()
+
+
+@dp.callback_query(F.data == "adm_stat_finance_detail")
+async def admin_stat_finance_detail_handler(call: types.CallbackQuery):
+    if call.from_user.id != OWNER_ID:
+        return await call.answer("Ruxsat berilmagan!", show_alert=True)
+        
+    users = db_data.get("users", {})
+    orders = db_data.get("orders", [])
+    deposits = db_data.get("deposits", [])
+    
+    total_deposited = sum(u.get("deposited", 0) for u in users.values())
+    total_user_balance = sum(u.get("balance", 0) for u in users.values())
+    total_orders_price = sum(o.get("price", 0) or o.get("cost", 0) for o in orders)
+    
+    msg = (
+        "💰 <b>MOLIYAVIY HISOBOT VA KASSA TAFSILOTLARI:</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"💵 <b>Jami kirim (Depozitlar):</b> {total_deposited:,} so'm\n"
+        f"💳 <b>Foydalanuvchilar joriy balansi:</b> {total_user_balance:,} so'm\n"
+        f"🛒 <b>Xizmatlarga ishlatilgan:</b> {total_orders_price:,} so'm\n"
+        f"📊 <b>Muvaffaqiyatli to'lovlar soni:</b> {len(deposits)} ta\n\n"
+        "<i>Barcha hisob-kitoblar doimiy data.json bazasidan real vaqtda olinadi.</i>"
     )
-    await message.answer(stats_text, parse_mode="HTML")
+    back_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Statistikaga qaytish", callback_data="adm_stat_refresh")]
+    ])
+    await safe_edit(call.message, msg, reply_markup=back_kb, parse_mode="HTML")
+    await call.answer()
+
+
+@dp.callback_query(F.data == "adm_stat_close")
+async def admin_stat_close_handler(call: types.CallbackQuery):
+    if call.from_user.id != OWNER_ID:
+        return await call.answer("Ruxsat berilmagan!", show_alert=True)
+    try:
+        await call.message.delete()
+    except Exception:
+        await safe_edit(call.message, "✅ Statistika oynasi yopildi.")
+    await call.answer()
 
 
 async def check_orders_once():
