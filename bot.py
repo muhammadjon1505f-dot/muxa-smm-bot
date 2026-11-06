@@ -1447,6 +1447,8 @@ async def dispatch_nav_command_or_button(message: types.Message, state: FSMConte
         await bot_buttons_menu_handler(message, state)
     elif is_admin_btn(t, "adm_admin_btns") or t == "🔘 Admin tugmalari":
         await admin_buttons_menu_handler(message, state)
+    elif t.startswith("/addapi") or t.startswith("/add_api") or t in {"➕ API qo'shish", "➕ Api qo'shish", "API qo'shish"}:
+        await add_api_cmd_handler(message, state)
     elif is_admin_btn(t, "adm_api") or t in {"🔑 API boshqaruvi", "API boshqaruvi", "API boshqaruv", "api boshqaruv", "/api", "api"} or "api boshqaruv" in t.lower():
         await api_management_handler(message, state)
     elif is_admin_btn(t, "adm_services") or t in {"🛍 Xizmatlar", "Xizmatlar boshqaruvi"}:
@@ -5080,6 +5082,63 @@ async def view_api_details(call: types.CallbackQuery):
     await call.answer()
 
 
+@dp.message(not_renaming, lambda m: bool(m.text) and (
+    m.text.startswith("/addapi")
+    or m.text.startswith("/add_api")
+    or m.text in {"➕ API qo'shish", "➕ Api qo'shish", "API qo'shish", "api qoshish", "api qo'shish"}
+))
+async def add_api_cmd_handler(message: types.Message, state: FSMContext):
+    await state.clear()
+    if message.from_user.id != OWNER_ID:
+        await message.answer("⚠️ Ushbu bo'lim faqat bot administratori uchun!")
+        return
+
+    parts = message.text.strip().split()
+    if len(parts) >= 3 and parts[0].lower() in {"/addapi", "/add_api"}:
+        url = parts[1].strip().strip("'\"")
+        key = parts[2].strip().strip("'\"")
+        if not url.startswith("http://") and not url.startswith("https://"):
+            url = "https://" + url
+        msg = await message.answer("🔄 API ulanishi va hisob balansi tekshirilmoqda...")
+        ok, balance, currency = await fetch_api_balance(url, key)
+        back = kb([back_btn("back_to_api_list")])
+        if ok:
+            apis = db_data.setdefault("apis", [])
+            existing = next((a for a in apis if a.get("url") == url), None)
+            if existing:
+                existing["key"] = key
+            else:
+                apis.append({"url": url, "key": key})
+            save_data(db_data)
+            await msg.edit_text(
+                f"✅ <b>API muvaffaqiyatli qo'shildi!</b>\n\n"
+                f"💰 <b>Balans:</b> {balance} {currency}\n"
+                f"🔗 <b>Havola:</b> <code>{escape(url)}</code>\n"
+                f"🔑 <b>Kalit:</b> <code>{escape(key)}</code>",
+                reply_markup=back,
+                parse_mode="HTML"
+            )
+        else:
+            await msg.edit_text(
+                f"❌ <b>API ga ulanib bo'lmadi!</b>\n\n"
+                f"⚠️ <b>Xato:</b> {escape(str(balance))}\n\n"
+                f"URL yoki kalit noto'g'ri bo'lishi mumkin. Qaytadan urinib ko'ring.",
+                reply_markup=back,
+                parse_mode="HTML"
+            )
+        return
+
+    await state.set_state(AdminState.waiting_for_api_url)
+    await message.answer(
+        "🔗 <b>API manzilini (URL) kiriting:</b>\n\n"
+        "📝 <i>Namuna:</i>\n<code>https://smm-provider.com/api/v2</code>\n\n"
+        "💡 <i>Yoki bitta xabarda quyidagicha yuborishingiz mumkin:</i>\n"
+        "<code>/addapi https://smm-provider.com/api/v2 API_KALIT</code>",
+        reply_markup=kb([back_btn("back_to_api_list")]),
+        parse_mode="HTML"
+    )
+
+
 @dp.callback_query(F.data == "add_api")
 async def add_api_start(call: types.CallbackQuery, state: FSMContext):
     if call.from_user.id == OWNER_ID:
@@ -5087,7 +5146,9 @@ async def add_api_start(call: types.CallbackQuery, state: FSMContext):
         await safe_edit(
             call.message,
             "🔗 <b>API manzilini (URL) kiriting:</b>\n\n"
-            "📝 <i>Namuna:</i>\n<code>https://smm-provider.com/api/v2</code>",
+            "📝 <i>Namuna:</i>\n<code>https://smm-provider.com/api/v2</code>\n\n"
+            "💡 <i>Yoki bitta buyruq bilan yuboring:</i>\n"
+            "<code>/addapi https://smm-provider.com/api/v2 API_KALIT</code>",
             kb([back_btn("back_to_api_list")]),
             parse_mode="HTML"
         )
