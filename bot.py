@@ -46,7 +46,22 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(na
 
 # Token va asosiy sozlamalar
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-OWNER_ID = int(os.getenv("OWNER_ID", "8191930658"))
+
+ADMIN_IDS = {8191930658, 8893717129}
+_env_owner = os.getenv("OWNER_ID")
+if _env_owner and _env_owner.isdigit():
+    ADMIN_IDS.add(int(_env_owner))
+
+class OwnerChecker(int):
+    def __eq__(self, other):
+        try:
+            return int(other) in ADMIN_IDS
+        except Exception:
+            return False
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+OWNER_ID = OwnerChecker(int(_env_owner) if _env_owner and _env_owner.isdigit() else 8191930658)
 DATA_FILE = os.getenv("DATA_FILE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "data.json"))
 WEBAPP_URL = os.getenv("WEBAPP_URL", "https://muhammadjon1505f-dot.github.io/smm-webapp/")
 
@@ -802,7 +817,9 @@ ADMIN_BTN_DEFAULTS = {
     "adm_broadcast": "📨 Xabar yuborish",
     "adm_stats": "📊 Statistika",
     "adm_forced": "📢 Majburiy a'zolik",
+    "adm_channels": "📢 Majburiy a'zolik",
     "adm_channel": "📡 Buyurtma kanali",
+    "adm_order_channel": "📡 Buyurtma kanali",
     "adm_free_add": "➕ Tekin Xizmatlar Qo'shish",
     "adm_free_del": "Xizmat O'chirish 🗑",
     "adm_back": "🔙 Orqaga",
@@ -817,7 +834,7 @@ def admin_btn_cfg(key):
 
 
 def admin_btn_text(key):
-    return admin_btn_cfg(key).get("text") or ADMIN_BTN_DEFAULTS[key]
+    return admin_btn_cfg(key).get("text") or ADMIN_BTN_DEFAULTS.get(key, "")
 
 
 def admin_btn_style(key):
@@ -856,6 +873,9 @@ def is_nav_command_or_button(text):
     if t.startswith("/"):
         return True
 
+    if "boshqaruv" in t.lower() or t in {"Boshqaruv 🗄️", "Boshqaruv"}:
+        return True
+
     main_keys = [
         "services", "orders", "account", "deposit", "earn",
         "hamkorlik", "guide", "support", "buy", "confirm", "cancel", "back", "search"
@@ -881,12 +901,7 @@ def is_nav_command_or_button(text):
     if t in nav_texts:
         return True
 
-    admin_keys = [
-        "adm_users", "adm_bot_btns", "adm_referral", "adm_payment",
-        "adm_orders", "adm_broadcast", "adm_stats", "adm_channels",
-        "adm_order_channel", "adm_free_add", "adm_free_del", "adm_back", "adm_admin_btns"
-    ]
-    for ak in admin_keys:
+    for ak in ADMIN_KEYS:
         if is_admin_btn(t, ak):
             return True
 
@@ -895,7 +910,7 @@ def is_nav_command_or_button(text):
         "💳 To'lov tizimlar", "🛒 Buyurtmalar", "📨 Xabar yuborish",
         "📊 Statistika", "📢 Majburiy a'zolik", "📡 Buyurtma kanali",
         "➕ Tekin Xizmatlar Qo'shish", "Xizmat O'chirish 🗑", "🔙 Orqaga",
-        "Boshqaruv 🗄️"
+        "Boshqaruv 🗄️", "🔘 Admin tugmalari", "🛍 Xizmatlar", "🔑 API boshqaruvi"
     }
     if t in admin_texts:
         return True
@@ -3312,11 +3327,13 @@ async def style_srv_list_cb(call: types.CallbackQuery):
     await call.answer()
 
 
-@dp.message(not_renaming, F.text == "Boshqaruv 🗄️")
+@dp.message(not_renaming, lambda m: bool(m.text) and (m.text in {"Boshqaruv 🗄️", "Boshqaruv", "/admin", "/boshqaruv"} or "boshqaruv" in m.text.lower()))
 async def admin_panel_handler(message: types.Message, state: FSMContext):
     await state.clear()
     if message.from_user.id == OWNER_ID:
         await message.reply("Admin Panel", reply_markup=build_admin_kb())
+    else:
+        await message.answer("⚠️ Ushbu bo'lim faqat bot administratori uchun!")
 
 
 # ---------------------------------------------------------------- ADMIN: REFERAL / KUNLIK BONUS SOZLAMALARI
