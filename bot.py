@@ -490,48 +490,80 @@ async def safe_edit(message, text, reply_markup=None, parse_mode=None, **kw):
 async def api_post(url: str, payload: dict):
     if not url:
         return False, "URL kiritilmagan"
-    url = url.strip()
+    url = url.strip().strip("'\"")
     if not url.startswith("http://") and not url.startswith("https://"):
         url = "https://" + url
 
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         "Accept": "application/json, text/plain, */*",
     }
     timeout = aiohttp.ClientTimeout(total=25)
     connector = aiohttp.TCPConnector(ssl=False)
 
+    candidate_urls = [url]
+    if url.endswith("/"):
+        candidate_urls.append(url.rstrip("/"))
+    else:
+        candidate_urls.append(url + "/")
+
+    last_error = "Noma'lum javob"
+
     try:
         async with aiohttp.ClientSession(timeout=timeout, connector=connector, headers=headers) as session:
-            # 1. POST orqali urinib ko'rish (SMM Panel v2 standarti)
-            try:
-                async with session.post(url, data=payload) as resp:
-                    raw = await resp.text()
-                    cleaned = raw.lstrip("\ufeff").strip()
-                    if resp.status == 200:
-                        try:
-                            return True, json.loads(cleaned)
-                        except Exception:
-                            if cleaned.replace(".", "", 1).isdigit():
-                                return True, {"balance": cleaned, "currency": "USD"}
-                            return False, f"Provayder noto'g'ri javob qaytardi: {cleaned[:100]}"
-                    elif resp.status not in (404, 405):
-                        return False, f"HTTP Error {resp.status}: {cleaned[:100]}"
-            except Exception:
-                pass
+            for u in candidate_urls:
+                # 1. POST (form-data: standard SMM v2)
+                try:
+                    async with session.post(u, data=payload, allow_redirects=True) as resp:
+                        raw = await resp.text()
+                        logging.info(f"[API_POST_FORM] u={u} status={resp.status} resp={raw[:150]!r}")
+                        cleaned = raw.lstrip("\ufeff").strip()
+                        if resp.status == 200:
+                            try:
+                                return True, json.loads(cleaned)
+                            except Exception:
+                                if cleaned.replace(".", "", 1).isdigit():
+                                    return True, {"balance": cleaned, "currency": "USD"}
+                        last_error = f"HTTP {resp.status}: {cleaned[:120]}"
+                except Exception as e:
+                    logging.info(f"[API_POST_FORM_ERR] u={u} err={e}")
+                    last_error = str(e)
 
-            # 2. GET orqali fallback
-            async with session.get(url, params=payload) as resp:
-                raw = await resp.text()
-                cleaned = raw.lstrip("\ufeff").strip()
-                if resp.status == 200:
-                    try:
-                        return True, json.loads(cleaned)
-                    except Exception:
-                        if cleaned.replace(".", "", 1).isdigit():
-                            return True, {"balance": cleaned, "currency": "USD"}
-                        return False, f"Provayder noto'g'ri javob qaytardi: {cleaned[:100]}"
-                return False, f"HTTP Error {resp.status}: {cleaned[:100]}"
+                # 2. POST (json body)
+                try:
+                    async with session.post(u, json=payload, allow_redirects=True) as resp:
+                        raw = await resp.text()
+                        logging.info(f"[API_POST_JSON] u={u} status={resp.status} resp={raw[:150]!r}")
+                        cleaned = raw.lstrip("\ufeff").strip()
+                        if resp.status == 200:
+                            try:
+                                return True, json.loads(cleaned)
+                            except Exception:
+                                if cleaned.replace(".", "", 1).isdigit():
+                                    return True, {"balance": cleaned, "currency": "USD"}
+                        last_error = f"HTTP {resp.status}: {cleaned[:120]}"
+                except Exception as e:
+                    logging.info(f"[API_POST_JSON_ERR] u={u} err={e}")
+                    last_error = str(e)
+
+                # 3. GET fallback
+                try:
+                    async with session.get(u, params=payload, allow_redirects=True) as resp:
+                        raw = await resp.text()
+                        logging.info(f"[API_GET] u={u} status={resp.status} resp={raw[:150]!r}")
+                        cleaned = raw.lstrip("\ufeff").strip()
+                        if resp.status == 200:
+                            try:
+                                return True, json.loads(cleaned)
+                            except Exception:
+                                if cleaned.replace(".", "", 1).isdigit():
+                                    return True, {"balance": cleaned, "currency": "USD"}
+                        last_error = f"HTTP {resp.status}: {cleaned[:120]}"
+                except Exception as e:
+                    logging.info(f"[API_GET_ERR] u={u} err={e}")
+                    last_error = str(e)
+
+            return False, last_error
 
     except asyncio.TimeoutError:
         return False, "Provayder serveri javob bermadi (Timeout 25s)"
@@ -546,9 +578,11 @@ async def fetch_api_balance(url: str, key: str):
             return False, data, None
         if isinstance(data, dict):
             if "balance" in data:
-                return True, data.get("balance"), data.get("currency", "USD")
+                return True, data.get("balance"), data.get("currency") or "USD"
             if "error" in data:
-                return False, data.get("error"), None
+                return False, str(data.get("error")), None
+            if "message" in data:
+                return False, str(data.get("message")), None
         return False, "Noma'lum javob", None
     except Exception as e:
         return False, str(e), None
@@ -1265,6 +1299,10 @@ async def register_user(tg_user):
 class RegisterMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
         user = getattr(event, "from_user", None)
+        if isinstance(event, types.Message):
+            logging.info(f"==> [USER_MSG] uid={user.id if user else None} text={event.text!r}")
+        elif isinstance(event, types.CallbackQuery):
+            logging.info(f"==> [USER_CB] uid={user.id if user else None} data={event.data!r}")
         if user and is_blocked(user.id):
             # bloklangan foydalanuvchiga hech qanday javob berilmaydi
             if isinstance(event, types.CallbackQuery):
@@ -5062,7 +5100,8 @@ async def process_api_url(message: types.Message, state: FSMContext):
         await dispatch_nav_command_or_button(message, state)
         return
     if message.from_user.id == OWNER_ID:
-        url = (message.text or "").strip()
+        url = (message.text or "").strip().strip("'\"")
+        logging.info(f"[PROCESS_API_URL] uid={message.from_user.id} url={url!r}")
         if not url:
             await message.answer("❌ URL bo'sh bo'lishi mumkin emas. Qaytadan kiriting:", reply_markup=kb([back_btn("back_to_api_list")]))
             return
@@ -5084,14 +5123,16 @@ async def process_api_key(message: types.Message, state: FSMContext):
         await dispatch_nav_command_or_button(message, state)
         return
     if message.from_user.id == OWNER_ID:
-        key = (message.text or "").strip()
+        key = (message.text or "").strip().strip("'\"")
+        data = await state.get_data()
+        url = data.get("api_url")
+        logging.info(f"[PROCESS_API_KEY] uid={message.from_user.id} url={url!r} key_len={len(key)}")
         if not key:
             await message.answer("❌ API kaliti bo'sh bo'lmasligi kerak. Qaytadan kiriting:", reply_markup=kb([back_btn("back_to_api_list")]))
             return
-        data = await state.get_data()
-        url = data.get("api_url")
         msg = await message.answer("🔄 API ulanishi va hisob balansi tekshirilmoqda...")
         ok, balance, currency = await fetch_api_balance(url, key)
+        logging.info(f"[PROCESS_API_KEY_RESULT] ok={ok} balance={balance!r} currency={currency!r}")
         back = kb([back_btn("back_to_api_list")])
         if ok:
             apis = db_data.setdefault("apis", [])
