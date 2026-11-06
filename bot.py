@@ -6444,7 +6444,30 @@ async def admin_stats_handler(message: types.Message, state: FSMContext):
     await state.clear()
     if message.from_user.id != OWNER_ID:
         return
-    await message.answer("📊 <b>Statistika</b>\n\n⏳ Bu bo'lim tez orada ishga tushiriladi!", parse_mode="HTML")
+    
+    users = db_data.get("users", {})
+    orders = db_data.get("orders", [])
+    
+    total_users = len(users)
+    active_users = sum(1 for u in users.values() if not u.get("blocked", False))
+    total_balance = sum(u.get("balance", 0) for u in users.values())
+    total_deposited = sum(u.get("deposited", 0) for u in users.values())
+    total_orders = len(orders)
+    
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_users = sum(1 for u in users.values() if str(u.get("info", {}).get("joined", "")).startswith(today_str))
+
+    stats_text = (
+        f"📊 <b>Bot Statistikasi (Jonli):</b>\n\n"
+        f"👥 <b>Jami a'zolar:</b> <code>{total_users}</code> ta\n"
+        f"🟢 <b>Faol foydalanuvchilar:</b> <code>{active_users}</code> ta\n"
+        f"🆕 <b>Bugun qo'shilganlar:</b> <code>{today_users}</code> ta\n\n"
+        f"🛒 <b>Jami buyurtmalar:</b> <code>{total_orders}</code> ta\n"
+        f"💰 <b>Foydalanuvchilar balansi:</b> <code>{total_balance:,}</code> so'm\n"
+        f"💳 <b>Kiritilgan mablag':</b> <code>{total_deposited:,}</code> so'm\n\n"
+        f"⚡️ <b>Server:</b> PythonAnywhere (24/7 Webhook)"
+    )
+    await message.answer(stats_text, parse_mode="HTML")
 
 
 async def check_orders_once():
